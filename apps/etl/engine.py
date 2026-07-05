@@ -24,6 +24,10 @@ class EngineResult:
         None  # validate_step.ValidationOutcome, left untyped to avoid import noise
     )
     duration_seconds: float = 0.0
+    # Raw/transformed DataFrames, exposed so a caller (pipelines app) can snapshot medallion
+    # (bronze/silver) layers. repr=False keeps them out of log lines.
+    raw_df: object = field(default=None, repr=False)
+    transformed_df: object = field(default=None, repr=False)
 
 
 def run(
@@ -38,28 +42,32 @@ def run(
     started = time.monotonic()
     step_logs: list[str] = []
 
-    df = extract_step.extract(extract_spec.get("type"), extract_spec)
-    rows_extracted = len(df)
+    raw_df = extract_step.extract(extract_spec.get("type"), extract_spec)
+    rows_extracted = len(raw_df)
     step_logs.append(
         f"extracted {rows_extracted} row(s) from {extract_spec.get('type')}"
     )
 
-    outcome = validate_step.validate(df, validation_spec)
+    outcome = validate_step.validate(raw_df, validation_spec)
     step_logs.append(f"validation passed: overall_score={outcome.overall_score}")
 
-    df = transform_step.transform(df, transform_spec)
-    step_logs.append(f"transformed to {len(df)} row(s), {len(df.columns)} column(s)")
+    transformed_df = transform_step.transform(raw_df, transform_spec)
+    step_logs.append(
+        f"transformed to {len(transformed_df)} row(s), {len(transformed_df.columns)} column(s)"
+    )
 
-    load_result = load_step.load(df, loader)
+    load_result = load_step.load(transformed_df, loader)
     step_logs.append(f"loaded: {load_result}")
 
     return EngineResult(
         rows_extracted=rows_extracted,
-        rows_loaded=len(df),
+        rows_loaded=len(transformed_df),
         step_logs=step_logs,
         load_result=load_result,
         validation=outcome,
         duration_seconds=time.monotonic() - started,
+        raw_df=raw_df,
+        transformed_df=transformed_df,
     )
 
 

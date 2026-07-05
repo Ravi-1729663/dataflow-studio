@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.pipelines",
     "apps.scheduler",
     "apps.validation",
+    "apps.metadata",
     "apps.warehouse",
 ]
 

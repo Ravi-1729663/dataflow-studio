@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.etl import engine
 from apps.etl.exceptions import EtlError, ValidationFailed
+from apps.metadata.services import record_ingest
 from apps.validation.services import persist_scorecard
 
 from .loaders import get_loader
@@ -95,6 +96,7 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
     run.save(update_fields=["status", "metrics", "logs", "finished_at", "updated_at"])
     if result.validation is not None:
         persist_scorecard(run, result.validation)
+    record_ingest(pipeline, run, result.raw_df, result.transformed_df)
     logger.info(
         "pipeline run succeeded",
         extra={"pipeline_id": pipeline.id, "run_id": run.id, "metrics": run.metrics},

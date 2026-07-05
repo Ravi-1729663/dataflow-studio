@@ -71,9 +71,21 @@ this is the "trend". A blocking-severity rule stops the load entirely (no scorec
 warning-severity rules still lower the score but let the run succeed.
 
 ## metadata
-Dataset registry, schema history/versioning, column metadata, and table/column **lineage**
-(sourceâ†’bronzeâ†’silverâ†’gold). Schema-drift detection on ingest. Backs the medallion layers (Parquet +
-DuckDB).
+Populated by `pipelines.services.execute_attempt` on every successful run (a run a blocking
+validation rule stopped is never cataloged). `Dataset` is the registry entry for a warehouse
+target (e.g. "customers") â€” shared across every pipeline that feeds it, just like the shared
+warehouse table it describes isn't owner-scoped. `SchemaVersion` snapshots the raw/bronze schema
+per run and flags drift against the previous version; a column that both disappeared and
+reappeared under the name the pipeline's transform `rename` config maps it to is recorded as a
+rename, not an unrelated add/drop pair. `ColumnMetadata` is the current column catalog
+(`created_at`/`updated_at` double as first/last-seen). `LineageNode`/`LineageEdge` model the
+SOURCEâ†’BRONZEâ†’SILVERâ†’GOLD graph â€” bronze/silver/gold nodes are shared per dataset, so a graph can
+show multiple sources feeding one warehouse table; each edge keeps its own column mapping per
+pipeline for provenance. `medallion.py` writes bronze/silver (per-run batches) and gold (a full
+warehouse-table snapshot after each load) as Parquet under `data/medallion/<layer>/<dataset>/`,
+queried back via DuckDB (`read_parquet`) â€” gold queries only the latest file, since each one is a
+complete snapshot. API: `datasets/`, `schema-versions/`, `columns/` (read-only), plus
+`datasets/<name>/lineage/` (the full graph) and `datasets/<name>/medallion/<layer>/` (DuckDB query).
 
 ## monitoring
 Prometheus counters/histograms (runs, durations, rows, failures) and an execution-dashboard API

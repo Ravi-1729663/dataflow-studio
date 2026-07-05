@@ -2,9 +2,20 @@
 
 import logging
 
+import pandas as pd
+
 from .models import Customer
 
 logger = logging.getLogger("dataflow.warehouse")
+
+_GOLD_COLUMNS = [
+    "external_id",
+    "first_name",
+    "last_name",
+    "email",
+    "signup_date",
+    "country",
+]
 
 
 def upsert_customers(rows: list[dict]) -> dict:
@@ -29,3 +40,10 @@ def upsert_customers(rows: list[dict]) -> dict:
         "customers upserted", extra={"created_count": created, "updated_count": updated}
     )
     return {"created": created, "updated": updated}
+
+
+def get_dataframe() -> pd.DataFrame:
+    """Full snapshot of the served gold table, used to write the metadata app's gold medallion
+    layer — the dataset's Parquet gold layer always mirrors what this API actually serves.
+    """
+    return pd.DataFrame(list(Customer.objects.values(*_GOLD_COLUMNS)))
