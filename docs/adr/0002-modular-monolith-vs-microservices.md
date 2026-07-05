@@ -1,4 +1,4 @@
-﻿# ADR 0002 â€” Modular monolith over microservices
+# ADR 0002 â€” Modular monolith over microservices
 
 - **Status:** Accepted
 - **Context:** The platform has clear bounded contexts (auth, sources, pipelines, validation,

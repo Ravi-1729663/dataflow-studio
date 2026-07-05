@@ -1,4 +1,4 @@
-﻿# DataFlow Studio
+# DataFlow Studio
 
 > An internal enterprise **data platform**: register data sources, build and schedule validated
 > ETL/ELT pipelines, govern data with a metadata catalog and lineage, and monitor every run â€” all

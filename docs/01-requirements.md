@@ -1,4 +1,4 @@
-﻿# Requirements Analysis
+# Requirements Analysis
 
 ## Business problem
 Organizations pull data from many places â€” files, spreadsheets, SQL databases, REST APIs, SaaS

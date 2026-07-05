@@ -1,4 +1,4 @@
-﻿# Module Specifications
+# Module Specifications
 
 Each module is a Django app under `apps/`. Layering: `models` â†’ `services` â†’ `serializers`/`views`.
 Acceptance criteria per version are in `PROJECT_PLAN.md`; this file is the per-module contract.

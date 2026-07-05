@@ -1,4 +1,4 @@
-﻿# Scope
+# Scope
 
 ## In scope (through v1.0)
 Auth + RBAC + workspaces + admin Â· file/Postgres/REST sources Â· ETL engine (batch + incremental,

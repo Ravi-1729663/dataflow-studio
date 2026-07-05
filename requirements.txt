@@ -1,4 +1,4 @@
-﻿# ---- Core runtime (v0.1+) ----
+# ---- Core runtime (v0.1+) ----
 Django>=5.0,<5.2
 djangorestframework>=3.15
 djangorestframework-simplejwt>=5.3

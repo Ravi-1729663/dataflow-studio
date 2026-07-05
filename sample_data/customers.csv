@@ -1,0 +1,11 @@
+customer_id,first_name,last_name,email,signup_date,country
+1,Ada,Lovelace,ada.lovelace@example.com,2024-01-15,UK
+2,Grace,Hopper,grace.hopper@example.com,2024-01-22,US
+3,Katherine,Johnson,katherine.johnson@example.com,2024-02-03,US
+4,Margaret,Hamilton,margaret.hamilton@example.com,2024-02-10,US
+5,Radia,Perlman,radia.perlman@example.com,2024-03-01,US
+6,Tim,Berners-Lee,tim.bernerslee@example.com,2024-03-14,UK
+7,Barbara,Liskov,barbara.liskov@example.com,2024-04-02,US
+8,Frances,Allen,frances.allen@example.com,2024-04-18,US
+9,Shafi,Goldwasser,shafi.goldwasser@example.com,2024-05-05,US
+10,Adele,Goldberg,adele.goldberg@example.com,2024-05-20,US

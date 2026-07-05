@@ -1,4 +1,4 @@
-﻿# DataFlow Studio â€” Project Plan
+# DataFlow Studio â€” Project Plan
 
 **Owner:** Ravi Sankar Reddy Bovilla Â· **Status:** Planning â†’ Build Â· **Version target:** v1.0
 

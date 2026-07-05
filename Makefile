@@ -1,4 +1,4 @@
-﻿.PHONY: install migrate makemigrations seed run worker beat test lint format docker-up docker-down clean
+.PHONY: install migrate makemigrations seed run worker beat test lint format docker-up docker-down clean
 
 install:            ## Install dev + runtime dependencies
 	pip install -r requirements-dev.txt

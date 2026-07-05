@@ -1,4 +1,4 @@
-﻿# ADR 0001 â€” Core technology stack
+# ADR 0001 â€” Core technology stack
 
 - **Status:** Accepted
 - **Context:** Need a productive, hireable, local-first stack to build a data platform that a single

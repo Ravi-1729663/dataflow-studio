@@ -1,4 +1,4 @@
-﻿# ADR 0003 â€” PostgreSQL for OLTP, DuckDB + Parquet for the medallion layers
+# ADR 0003 â€” PostgreSQL for OLTP, DuckDB + Parquet for the medallion layers
 
 - **Status:** Accepted
 - **Context:** We need reliable transactional storage for platform state (users, sources, pipelines,

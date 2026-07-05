@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 DataFlow Studio is a **modular monolith**: one deployable Django application composed of
 independent apps (bounded contexts), with heavy work pushed to Celery workers. This gives the

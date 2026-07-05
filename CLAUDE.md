@@ -1,4 +1,4 @@
-﻿# CLAUDE.md â€” Build Instructions for Claude Code
+# CLAUDE.md â€” Build Instructions for Claude Code
 
 > Read this file **and** `PROJECT_PLAN.md` before writing any code. This file defines *how* to
 > build; `PROJECT_PLAN.md` defines *what* to build and *in what order*. Follow the milestones
