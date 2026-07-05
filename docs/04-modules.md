@@ -20,10 +20,19 @@ Connectors return a pandas DataFrame. Credentials are Fernet-encrypted (v0.7). C
 owner; a "test connection" action.
 
 ## etl  (framework-agnostic â€” no Django imports)
-Pure functions: `extract(source_type, config)`, `validate(df, spec)`, `transform(df, spec)`,
-`load` helpers, and `engine.run(...)` which orchestrates extractâ†’validateâ†’transformâ†’load, returns
-metrics + step logs, and raises on blocking validation failure. Receives a `loader` callable so it
-never touches the ORM.
+Pure functions: `extract(source_type, config)`, `transform(df, spec)`, `load` helpers, and
+`engine.run(...)` which orchestrates extractâ†’validateâ†’transformâ†’load, returns metrics + step logs
+(including the validation outcome), and raises on blocking validation failure. Receives a `loader`
+callable so it never touches the ORM.
+
+`validate(df, spec)` is the rule library behind data-quality scorecards: a pluggable registry of
+checks (`required_columns`, `not_null`, `unique`, `no_duplicate_rows`, `column_type`, `range`,
+`allowed_values`, `freshness`, `business_rule`), each with a `severity` of `blocking` (default) or
+`warning`. It always computes a completeness/consistency/accuracy scorecard â€” completeness and
+consistency come from the raw data's null/duplicate rates regardless of which rules are configured;
+accuracy is the mean pass-rate of whichever domain-specific rules were actually set. A blocking
+violation raises `ValidationFailed`, which still carries the full `ValidationOutcome` so a scorecard
+can be persisted even for a failed run.
 
 ## pipelines
 `Pipeline` (source FK, JSON config = validation/transform/target specs, schedule, is_active) and
@@ -51,9 +60,15 @@ dead-letter/` (exhausted runs), `POST runs/<id>/retry/` (re-enqueues a FAILED ru
 brand-new run — safe because loads are idempotent).
 
 ## validation
-Rule library (schema, null, duplicate, type, range, referential integrity, freshness, business
-rules), pluggable backend (custom â†’ optionally Great Expectations/Pandera), and a per-run **quality
-scorecard** (completeness/consistency/accuracy) persisted with history. Blocking checks fail the run.
+The rule library and scoring math live in `apps.etl.validate` (framework-agnostic, kept out of
+this app so it stays fast to unit test with no DB). This app's job is just to persist that outcome:
+`QualityScorecard` (one-to-one with a `PipelineRun`: completeness/consistency/accuracy/overall_score,
+`passed`, and the raw per-check `checks` JSON for drill-down) and `services.persist_scorecard(run,
+outcome)`, called from `pipelines.services.execute_attempt` on both success and a blocking
+`ValidationFailed`. Read-only API: `GET scorecards/?run__pipeline=<id>`, ordered oldest-first for
+charting, with a computed `score_delta` against the previous scorecard for the same pipeline —
+this is the "trend". A blocking-severity rule stops the load entirely (no scorecard-less runs);
+warning-severity rules still lower the score but let the run succeed.
 
 ## metadata
 Dataset registry, schema history/versioning, column metadata, and table/column **lineage**

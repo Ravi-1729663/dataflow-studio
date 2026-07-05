@@ -43,9 +43,21 @@ class Command(BaseCommand):
                 "schedule": "*/2 * * * *",
                 "config": {
                     "validation": {
-                        "required_columns": ["customer_id", "email"],
-                        "not_null": ["email"],
-                        "unique": ["email"],
+                        "rules": [
+                            {
+                                "type": "required_columns",
+                                "columns": ["customer_id", "email"],
+                            },
+                            {"type": "not_null", "columns": ["email"]},
+                            {"type": "unique", "columns": ["email"]},
+                            {"type": "no_duplicate_rows", "severity": "warning"},
+                            {
+                                "type": "allowed_values",
+                                "column": "country",
+                                "values": ["US", "UK"],
+                                "severity": "warning",
+                            },
+                        ]
                     },
                     "transform": {},
                     "target": "customers",
@@ -64,4 +76,14 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 self.style.ERROR(f"run {run.id}: {run.status} - {run.error}")
+            )
+
+        scorecard = getattr(run, "scorecard", None)
+        if scorecard is not None:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"scorecard: overall={scorecard.overall_score} "
+                    f"completeness={scorecard.completeness} consistency={scorecard.consistency} "
+                    f"accuracy={scorecard.accuracy} passed={scorecard.passed}"
+                )
             )

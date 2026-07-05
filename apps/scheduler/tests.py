@@ -43,9 +43,11 @@ def pipeline(db, customers_csv):
         owner=user,
         config={
             "validation": {
-                "required_columns": ["email"],
-                "not_null": ["email"],
-                "unique": ["email"],
+                "rules": [
+                    {"type": "required_columns", "columns": ["email"]},
+                    {"type": "not_null", "columns": ["email"]},
+                    {"type": "unique", "columns": ["email"]},
+                ]
             },
             "transform": {},
             "target": "customers",
@@ -143,7 +145,9 @@ def test_queue_view_lists_only_inflight_runs(pipeline):
 @pytest.mark.django_db
 def test_retry_failed_run_enqueues_a_new_run(pipeline):
     failed_run = execute_pipeline(pipeline)
-    pipeline.config["validation"] = {"required_columns": ["does_not_exist"]}
+    pipeline.config["validation"] = {
+        "rules": [{"type": "required_columns", "columns": ["does_not_exist"]}]
+    }
     pipeline.save()
     failed_run = execute_pipeline(pipeline)
     assert failed_run.status == PipelineRun.Status.FAILED

@@ -8,7 +8,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.etl import engine
-from apps.etl.exceptions import EtlError
+from apps.etl.exceptions import EtlError, ValidationFailed
+from apps.validation.services import persist_scorecard
 
 from .loaders import get_loader
 from .models import DeadLetterRecord, Pipeline, PipelineRun
@@ -61,6 +62,17 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
             transform_spec=pipeline.config.get("transform", {}),
             loader=loader,
         )
+    except ValidationFailed as exc:
+        run.error = str(exc)
+        run.traceback = traceback_module.format_exc()
+        run.save(update_fields=["error", "traceback", "updated_at"])
+        if exc.outcome is not None:
+            persist_scorecard(run, exc.outcome)
+        logger.warning(
+            "pipeline run blocked by validation",
+            extra={"pipeline_id": pipeline.id, "run_id": run.id, "error": str(exc)},
+        )
+        raise
     except EtlError as exc:
         run.error = str(exc)
         run.traceback = traceback_module.format_exc()
@@ -81,6 +93,8 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
     run.logs = result.step_logs
     run.finished_at = timezone.now()
     run.save(update_fields=["status", "metrics", "logs", "finished_at", "updated_at"])
+    if result.validation is not None:
+        persist_scorecard(run, result.validation)
     logger.info(
         "pipeline run succeeded",
         extra={"pipeline_id": pipeline.id, "run_id": run.id, "metrics": run.metrics},

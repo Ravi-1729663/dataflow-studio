@@ -41,9 +41,11 @@ def pipeline(db, customers_csv):
         owner=user,
         config={
             "validation": {
-                "required_columns": ["email"],
-                "not_null": ["email"],
-                "unique": ["email"],
+                "rules": [
+                    {"type": "required_columns", "columns": ["email"]},
+                    {"type": "not_null", "columns": ["email"]},
+                    {"type": "unique", "columns": ["email"]},
+                ]
             },
             "transform": {},
             "target": "customers",
@@ -60,11 +62,15 @@ def test_execute_pipeline_end_to_end_loads_warehouse(pipeline):
     assert run.metrics["created"] == 2
     assert Customer.objects.count() == 2
     assert Customer.objects.filter(email="ada@example.com").exists()
+    assert run.scorecard.overall_score == 100.0
+    assert run.scorecard.passed is True
 
 
 @pytest.mark.django_db
 def test_execute_pipeline_records_failure_on_validation_error(pipeline):
-    pipeline.config["validation"] = {"required_columns": ["does_not_exist"]}
+    pipeline.config["validation"] = {
+        "rules": [{"type": "required_columns", "columns": ["does_not_exist"]}]
+    }
     pipeline.save()
 
     run = execute_pipeline(pipeline)
@@ -72,6 +78,7 @@ def test_execute_pipeline_records_failure_on_validation_error(pipeline):
     assert run.status == PipelineRun.Status.FAILED
     assert "does_not_exist" in run.error
     assert Customer.objects.count() == 0
+    assert run.scorecard.passed is False
 
 
 @pytest.mark.django_db
