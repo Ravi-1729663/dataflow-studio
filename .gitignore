@@ -1,0 +1,33 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+/staticfiles/
+/media/
+
+# Env & secrets
+.env
+*.pem
+
+# Data artifacts
+/data/
+*.parquet
+*.duckdb
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+node_modules/

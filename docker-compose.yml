@@ -1,0 +1,66 @@
+﻿services:
+  web:
+    build: .
+    env_file: .env
+    environment:
+      USE_POSTGRES: "1"
+      CELERY_TASK_ALWAYS_EAGER: "0"
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    ports:
+      - "8000:8000"
+    depends_on: [db, redis]
+
+  worker:
+    build: .
+    command: celery -A config worker -l info
+    env_file: .env
+    environment:
+      USE_POSTGRES: "1"
+      CELERY_TASK_ALWAYS_EAGER: "0"
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on: [db, redis]
+
+  beat:
+    build: .
+    command: celery -A config beat -l info
+    env_file: .env
+    environment:
+      USE_POSTGRES: "1"
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on: [db, redis]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dataflow
+      POSTGRES_USER: dataflow
+      POSTGRES_PASSWORD: dataflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:

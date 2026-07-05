@@ -1,6 +1,6 @@
-# DataFlow Studio — Project Plan
+﻿# DataFlow Studio â€” Project Plan
 
-**Owner:** Ravi Sankar Reddy Bovilla · **Status:** Planning → Build · **Version target:** v1.0
+**Owner:** Ravi Sankar Reddy Bovilla Â· **Status:** Planning â†’ Build Â· **Version target:** v1.0
 
 This is the project-manager's blueprint. It defines the objectives, the scope, the build strategy,
 and a milestone-by-milestone task breakdown with acceptance criteria. Build it **version by
@@ -18,9 +18,9 @@ a documented API and dashboards.
 
 | KPI                                | Target for v1.0                                  |
 |------------------------------------|--------------------------------------------------|
-| End-to-end pipeline works          | CSV/API/DB source → validate → transform → warehouse → query |
-| Pipeline success rate (demo data)  | ≥ 99% on healthy inputs                          |
-| Test coverage on core logic        | ≥ 80% for `etl` + `pipelines` + `validation`     |
+| End-to-end pipeline works          | CSV/API/DB source â†’ validate â†’ transform â†’ warehouse â†’ query |
+| Pipeline success rate (demo data)  | â‰¥ 99% on healthy inputs                          |
+| Test coverage on core logic        | â‰¥ 80% for `etl` + `pipelines` + `validation`     |
 | API documented                     | 100% of endpoints in OpenAPI (`/api/docs/`)      |
 | Observability                      | Metrics, structured logs, and alerts on failures |
 | Reproducible deploy                | `docker compose up` boots the full stack         |
@@ -48,30 +48,30 @@ and every architectural decision is explainable in an interview.
 
 ---
 
-## 3. Build strategy — version by version (decision)
+## 3. Build strategy â€” version by version (decision)
 
 **Decision:** build incrementally, one release at a time, each independently runnable, tested, and
 committed. **Rejected:** "build everything, then debug."
 
 **Why incremental wins**
 
-- **Always shippable.** Every version boots and demos on its own — you never sit on a broken tree.
+- **Always shippable.** Every version boots and demos on its own â€” you never sit on a broken tree.
 - **Scoped debugging.** A regression came from the *last* increment, not from 5,000 lines across
   11 modules. Mean-time-to-fix stays low.
 - **No compounding integration bugs.** Interfaces are exercised as they land, not all at once.
 - **The story sells you.** Milestones + semantic versions + ADRs are exactly the signal hiring
   managers read as "this person operates like an engineer, not a script-runner."
 
-**Why not slow:** each version is a single Claude Code session — many files, tests, and fixes in
+**Why not slow:** each version is a single Claude Code session â€” many files, tests, and fixes in
 one go. You simply *gate* each version (green tests + a demo) before starting the next.
 
 ---
 
 ## 4. Milestone plan
 
-Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.x.0`).
+Each milestone: **Goal Â· Build Â· Acceptance Â· Demo.** Tag on completion (`v0.x.0`).
 
-### v0.1 — Walking skeleton  *(foundation; prove the architecture end-to-end)*
+### v0.1 â€” Walking skeleton  *(foundation; prove the architecture end-to-end)*
 - **Goal:** the thinnest complete path works and the layering holds.
 - **Build:** Django project + env-based settings; `common` (BaseModel, logging, exceptions, health);
   `accounts` (custom User + JWT + RBAC); `datasources` (FILE source + file connector);
@@ -79,14 +79,14 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
   service + celery task); `warehouse` (a demo target table + query API); `seed_demo` command;
   unit + integration tests; Dockerfile + compose; README.
 - **Acceptance:**
-  - [ ] `make seed` ingests `sample_data/customers.csv` → rows land in the warehouse table.
+  - [ ] `make seed` ingests `sample_data/customers.csv` â†’ rows land in the warehouse table.
   - [ ] `GET /api/warehouse/customers/` returns data (JWT required).
   - [ ] `make test` is green (ETL unit tests + one end-to-end pipeline test).
   - [ ] `docker compose up` boots web + worker + db + redis.
   - [ ] `/api/docs/` renders the schema.
-- **Demo:** register → login → create datasource → create pipeline → run → query results.
+- **Demo:** register â†’ login â†’ create datasource â†’ create pipeline â†’ run â†’ query results.
 
-### v0.2 — Pipeline engine + scheduler + async
+### v0.2 â€” Pipeline engine + scheduler + async
 - **Goal:** real orchestration, not a single synchronous call.
 - **Build:** pipeline lifecycle (create/edit/clone/pause/resume/execute); Celery async execution
   with `run_pipeline_task`; `scheduler` app on django-celery-beat (cron per pipeline, manual run,
@@ -97,9 +97,9 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
   idempotent (re-running does not double-load).
 - **Demo:** schedule a pipeline every 2 min, watch runs accrue, pause it, force a failure, see retry.
 
-### v0.3 — Validation engine + data-quality scorecards
+### v0.3 â€” Validation engine + data-quality scorecards
 - **Goal:** trustworthy data with visible quality.
-- **Build:** `validation` app — schema, null, duplicate, data-type, range, referential-integrity,
+- **Build:** `validation` app â€” schema, null, duplicate, data-type, range, referential-integrity,
   freshness, and business-rule checks (pluggable; optionally back with Great Expectations/Pandera);
   per-run **quality scorecard** (completeness/consistency/accuracy %) persisted with history and
   trend; blocking vs warning checks; contract to fail a run on blocking violations.
@@ -107,36 +107,36 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
   [ ] a blocking failure stops the load; [ ] scorecard history is queryable via API.
 - **Demo:** run clean vs dirty data, compare scorecards and the trend.
 
-### v0.4 — Metadata catalog + lineage + medallion
+### v0.4 â€” Metadata catalog + lineage + medallion
 - **Goal:** governance and modern lakehouse layering.
-- **Build:** `metadata` app — dataset registry, schema history/versioning, column metadata,
-  table- and column-level **lineage** (source → bronze → silver → gold); local **medallion** layers
+- **Build:** `metadata` app â€” dataset registry, schema history/versioning, column metadata,
+  table- and column-level **lineage** (source â†’ bronze â†’ silver â†’ gold); local **medallion** layers
   as Parquet queried via DuckDB; schema-drift detection on ingest.
 - **Acceptance:** [ ] lineage graph resolvable for any warehouse table; [ ] schema history records a
   column add/rename; [ ] bronze/silver/gold Parquet layers produced and queryable via DuckDB;
   [ ] a drifted source is flagged.
 - **Demo:** show the lineage graph and the medallion layers for the customers pipeline.
 
-### v0.5 — Observability + alerting + notifications
+### v0.5 â€” Observability + alerting + notifications
 - **Goal:** operate it like production.
 - **Build:** `monitoring` (Prometheus counters/histograms: runs, durations, rows, failures;
   Grafana dashboard JSON); execution dashboard API (success rate, failed jobs, runtime metrics);
-  structured JSON logs with correlation/run IDs; OpenTelemetry tracing API→worker;
+  structured JSON logs with correlation/run IDs; OpenTelemetry tracing APIâ†’worker;
   `notifications` (email + Slack webhook on failure/completion/retry); health checks.
 - **Acceptance:** [ ] `/metrics` exposes pipeline metrics; [ ] Grafana renders the dashboard;
   [ ] a failed run sends an alert; [ ] logs carry a run/correlation id end-to-end.
-- **Demo:** trigger a failure → alert fires → trace + logs pinpoint the failing step.
+- **Demo:** trigger a failure â†’ alert fires â†’ trace + logs pinpoint the failing step.
 
-### v0.6 — More connectors + incremental/CDC + SCD2
+### v0.6 â€” More connectors + incremental/CDC + SCD2
 - **Goal:** ingest from real systems, load efficiently.
 - **Build:** Postgres source connector + REST API connector (pagination, rate limiting, retries);
   incremental loads with watermark tracking; Slowly Changing Dimension **Type 2** handling; late-
   arriving data strategy; batch tuning + Parquet partitioning.
 - **Acceptance:** [ ] incremental run loads only new/changed rows via watermark; [ ] SCD2 keeps
   history with valid-from/valid-to; [ ] REST connector paginates + respects rate limits.
-- **Demo:** incremental load twice — second run touches only deltas; show SCD2 history rows.
+- **Demo:** incremental load twice â€” second run touches only deltas; show SCD2 history rows.
 
-### v0.7 — Multi-tenancy + admin + security hardening
+### v0.7 â€” Multi-tenancy + admin + security hardening
 - **Goal:** SaaS realism and a secure default.
 - **Build:** workspaces (org isolation across all queries); admin (user/role management, platform
   config, system health); Fernet-encrypted credentials at rest; audit logs; API rate limiting;
@@ -145,15 +145,15 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
   encrypted in the DB; [ ] audit log records sensitive actions; [ ] rate limit returns 429.
 - **Demo:** two workspaces, isolation proven; show an encrypted credential row and the audit trail.
 
-### v0.8 — React dashboard (optional but high-impact)
+### v0.8 â€” React dashboard (optional but high-impact)
 - **Goal:** a visual portfolio surface.
-- **Build:** React SPA — login, data sources, pipeline builder, run history + live status, metrics,
+- **Build:** React SPA â€” login, data sources, pipeline builder, run history + live status, metrics,
   lineage graph, quality scorecards. Talks to the REST API.
 - **Acceptance:** [ ] can create + run a pipeline from the UI; [ ] run status updates; [ ] lineage +
   scorecards render.
 - **Demo:** full loop performed entirely in the browser.
 
-### v0.9 — CI/CD, deploy, load & chaos tests, docs
+### v0.9 â€” CI/CD, deploy, load & chaos tests, docs
 - **Goal:** reproducible delivery and proven resilience.
 - **Build:** GitHub Actions (lint + test + build + optional deploy); deploy to Render (free tier);
   Locust load test; a **chaos test** that kills a worker mid-run and asserts recovery; complete
@@ -162,7 +162,7 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
   [ ] chaos test shows the run recovers/retries cleanly.
 - **Demo:** open the live URL; show the CI run and the chaos-test result.
 
-### v1.0 — Polish + portfolio
+### v1.0 â€” Polish + portfolio
 - **Goal:** ship-ready and interview-ready.
 - **Build:** README polish + screenshots + demo GIF; portfolio case study; release notes;
   resume bullets + STAR stories + interview Q&A (I can generate these in chat from the final repo).
@@ -170,14 +170,14 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
 
 ---
 
-## 5. Enhancement → milestone map
+## 5. Enhancement â†’ milestone map
 
 | Enhancement                          | Lands in |
 |--------------------------------------|----------|
 | Data lineage (table + column)        | v0.4     |
 | Medallion (bronze/silver/gold, DuckDB/Parquet) | v0.4 |
 | Data-quality scorecards + trends     | v0.3     |
-| Schema drift + evolution + contracts | v0.3–v0.4|
+| Schema drift + evolution + contracts | v0.3â€“v0.4|
 | CDC / incremental + watermarks       | v0.6     |
 | SCD Type 2                           | v0.6     |
 | Idempotent/resumable runs + DLQ      | v0.2     |
@@ -208,7 +208,7 @@ Each milestone: **Goal · Build · Acceptance · Demo.** Tag on completion (`v0.
 
 ## 7. Ways of working
 
-- **Branching:** short-lived feature branches → PR → `main`. Protect `main`.
+- **Branching:** short-lived feature branches â†’ PR â†’ `main`. Protect `main`.
 - **Commits:** conventional commits; **semantic versioning** with a tag per milestone.
 - **Decisions:** every non-trivial choice gets an ADR in `docs/adr/`.
 - **Tracking:** GitHub Issues + a milestone per version + a public roadmap in the README.

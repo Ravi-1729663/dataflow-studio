@@ -1,0 +1,29 @@
+﻿# ---- Core runtime (v0.1+) ----
+Django>=5.0,<5.2
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+drf-spectacular>=0.27          # OpenAPI / Swagger docs
+django-filter>=24.2
+django-prometheus>=2.3         # /metrics endpoint
+python-dotenv>=1.0
+
+# ---- Async / scheduling (v0.2+) ----
+celery>=5.4
+redis>=5.0
+django-celery-beat>=2.6        # DB-backed cron scheduler
+
+# ---- Data processing ----
+pandas>=2.2
+pyarrow>=16.0                  # Parquet
+duckdb>=1.0                    # local medallion / analytics engine (v0.4+)
+
+# ---- Security ----
+cryptography>=42.0            # Fernet secret encryption
+
+# ---- Database driver & server ----
+psycopg2-binary>=2.9
+gunicorn>=22.0
+
+# ---- Data quality (v0.3) -- uncomment when you reach that milestone ----
+# great-expectations>=0.18
+# pandera>=0.20

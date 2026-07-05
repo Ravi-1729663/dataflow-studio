@@ -1,22 +1,22 @@
-# DataFlow Studio
+﻿# DataFlow Studio
 
 > An internal enterprise **data platform**: register data sources, build and schedule validated
-> ETL/ELT pipelines, govern data with a metadata catalog and lineage, and monitor every run — all
+> ETL/ELT pipelines, govern data with a metadata catalog and lineage, and monitor every run â€” all
 > behind a documented REST API. Local-first and fully open-source.
 
-**Status:** planning → build · **License:** MIT · **Owner:** Ravi Sankar Reddy Bovilla
+**Status:** planning â†’ build Â· **License:** MIT Â· **Owner:** Ravi Sankar Reddy Bovilla
 
 ---
 
 ## What's in this repository right now
 
 This is the **blueprint + scaffold**. It contains the plan, the architecture, the conventions, and
-the empty module structure — ready for implementation, milestone by milestone.
+the empty module structure â€” ready for implementation, milestone by milestone.
 
-- [`PROJECT_PLAN.md`](PROJECT_PLAN.md) — scope, build strategy, and the v0.1→v1.0 milestone plan with
+- [`PROJECT_PLAN.md`](PROJECT_PLAN.md) â€” scope, build strategy, and the v0.1â†’v1.0 milestone plan with
   tasks and acceptance criteria. **Start here.**
-- [`CLAUDE.md`](CLAUDE.md) — engineering conventions and build rules for Claude Code.
-- [`docs/`](docs/) — requirements, scope, architecture (with diagrams), module specs, and ADRs.
+- [`CLAUDE.md`](CLAUDE.md) â€” engineering conventions and build rules for Claude Code.
+- [`docs/`](docs/) â€” requirements, scope, architecture (with diagrams), module specs, and ADRs.
 
 ## How to build it (with Claude Code)
 
@@ -63,14 +63,14 @@ make test
 ```bash
 cp .env.example .env
 make docker-up
-# API :8000 · Prometheus :9090 · Grafana :3000
+# API :8000 Â· Prometheus :9090 Â· Grafana :3000
 ```
 
 ## Architecture (summary)
 
 A **modular monolith** in Django with Celery workers. Requests hit the DRF API; pipelines are
 enqueued to Redis and executed by workers that call a framework-agnostic ETL engine
-(extract → validate → transform → load); results land in a warehouse/gold layer and are served over
+(extract â†’ validate â†’ transform â†’ load); results land in a warehouse/gold layer and are served over
 the API; every step emits metrics, structured logs, and lineage. Full diagrams and the rationale
 (with rejected alternatives) are in [`docs/03-architecture.md`](docs/03-architecture.md).
 
@@ -109,11 +109,11 @@ monitoring/     prometheus + grafana config
 
 ## Roadmap
 
-v0.1 walking skeleton · v0.2 pipeline engine + scheduler + async · v0.3 validation + quality
-scorecards · v0.4 metadata + lineage + medallion · v0.5 observability + alerting · v0.6 connectors +
-CDC + SCD2 · v0.7 multi-tenancy + security hardening · v0.8 React dashboard · v0.9 CI/CD + deploy +
-resilience tests · v1.0 polish + portfolio. Details in [`PROJECT_PLAN.md`](PROJECT_PLAN.md).
+v0.1 walking skeleton Â· v0.2 pipeline engine + scheduler + async Â· v0.3 validation + quality
+scorecards Â· v0.4 metadata + lineage + medallion Â· v0.5 observability + alerting Â· v0.6 connectors +
+CDC + SCD2 Â· v0.7 multi-tenancy + security hardening Â· v0.8 React dashboard Â· v0.9 CI/CD + deploy +
+resilience tests Â· v1.0 polish + portfolio. Details in [`PROJECT_PLAN.md`](PROJECT_PLAN.md).
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT â€” see [`LICENSE`](LICENSE).

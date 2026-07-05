@@ -1,4 +1,4 @@
-# CLAUDE.md — Build Instructions for Claude Code
+﻿# CLAUDE.md â€” Build Instructions for Claude Code
 
 > Read this file **and** `PROJECT_PLAN.md` before writing any code. This file defines *how* to
 > build; `PROJECT_PLAN.md` defines *what* to build and *in what order*. Follow the milestones
@@ -6,7 +6,7 @@
 
 ## What this project is
 
-**DataFlow Studio** — an internal enterprise data platform. Teams register data sources, build
+**DataFlow Studio** â€” an internal enterprise data platform. Teams register data sources, build
 and schedule ETL/ELT pipelines, validate and govern the data, and monitor everything through a
 documented REST API and dashboards. Backend is a **modular monolith** in Django.
 
@@ -27,26 +27,26 @@ documented REST API and dashboards. Backend is a **modular monolith** in Django.
 | Packaging     | Docker + docker-compose                            |
 | CI            | GitHub Actions                                     |
 
-> Note: "djered SimpleJWT" above is a typo-safe reminder — the package is
+> Note: "djered SimpleJWT" above is a typo-safe reminder â€” the package is
 > `djangorestframework-simplejwt`. Import from `rest_framework_simplejwt`.
 
 ## Golden rules
 
 1. **Modular monolith, one Django app per bounded context.** Apps live under `apps/`. Never let
-   one app import another app's internals — go through its public services/serializers only.
+   one app import another app's internals â€” go through its public services/serializers only.
 2. **The ETL engine (`apps/etl/`) is framework-agnostic.** It must not import Django models. It
    receives plain specs (dicts/dataclasses) and a `loader` callable. The `pipelines` app is the
    only place that bridges Django models to the engine. This keeps the engine unit-testable and
    swappable.
-3. **Clean layering per app:** `models.py` (data) → `services.py` (business logic) →
+3. **Clean layering per app:** `models.py` (data) â†’ `services.py` (business logic) â†’
    `views.py`/`serializers.py` (HTTP). Views stay thin; logic lives in services.
 4. **Config comes from the environment.** No secrets, hosts, or paths hardcoded. Read via
    `os.environ` in `config/settings/`. Data-source credentials are encrypted at rest with Fernet.
-5. **Every module ships with tests.** Pure logic (ETL, validation) → fast unit tests, no DB.
-   Anything touching models → `@pytest.mark.django_db` integration tests.
+5. **Every module ships with tests.** Pure logic (ETL, validation) â†’ fast unit tests, no DB.
+   Anything touching models â†’ `@pytest.mark.django_db` integration tests.
 6. **Structured logging everywhere.** Use `logging.getLogger("dataflow.<area>")` and pass context
    via `extra={...}`. No bare `print`.
-7. **UUID primary keys on domain models** (DataSource, Pipeline, PipelineRun, Dataset, …) via a
+7. **UUID primary keys on domain models** (DataSource, Pipeline, PipelineRun, Dataset, â€¦) via a
    shared `apps/common/models.BaseModel`. The `User` model may keep the default integer PK.
 8. **Flexible config as JSON.** Pipeline/validation/transform specs are stored in `JSONField`s so
    the schema can evolve without migrations.
@@ -55,26 +55,26 @@ documented REST API and dashboards. Backend is a **modular monolith** in Django.
 
 ```
 dataflow-studio/
-├── config/                 # Django project: settings/, urls.py, celery.py, wsgi.py, asgi.py
-│   └── settings/           # base.py, local.py, production.py
-├── apps/
-│   ├── common/             # BaseModel, logging, exceptions, custom DRF exception handler, health
-│   ├── accounts/           # User, JWT auth, RBAC permissions
-│   ├── datasources/        # DataSource model + connectors/ (file, postgres, rest_api)
-│   ├── etl/                # extract / validate / transform / load / engine  (NO Django imports)
-│   ├── pipelines/          # Pipeline, PipelineRun, execute service, celery tasks, loaders
-│   ├── scheduler/          # cron schedules on top of django-celery-beat
-│   ├── validation/         # validation rules + data-quality scorecards
-│   ├── metadata/           # dataset registry, schema history, column metadata, lineage
-│   ├── monitoring/         # execution metrics + Prometheus counters
-│   ├── notifications/      # email/Slack alerts on run events
-│   └── warehouse/          # target/serving tables + query API (the "gold" layer)
-├── docs/                   # requirements, scope, architecture, ADRs
-├── monitoring/             # prometheus.yml, grafana provisioning
-├── scripts/                # one-off scripts
-├── sample_data/            # demo CSVs
-├── .github/workflows/      # CI
-└── manage.py
+â”œâ”€â”€ config/                 # Django project: settings/, urls.py, celery.py, wsgi.py, asgi.py
+â”‚   â””â”€â”€ settings/           # base.py, local.py, production.py
+â”œâ”€â”€ apps/
+â”‚   â”œâ”€â”€ common/             # BaseModel, logging, exceptions, custom DRF exception handler, health
+â”‚   â”œâ”€â”€ accounts/           # User, JWT auth, RBAC permissions
+â”‚   â”œâ”€â”€ datasources/        # DataSource model + connectors/ (file, postgres, rest_api)
+â”‚   â”œâ”€â”€ etl/                # extract / validate / transform / load / engine  (NO Django imports)
+â”‚   â”œâ”€â”€ pipelines/          # Pipeline, PipelineRun, execute service, celery tasks, loaders
+â”‚   â”œâ”€â”€ scheduler/          # cron schedules on top of django-celery-beat
+â”‚   â”œâ”€â”€ validation/         # validation rules + data-quality scorecards
+â”‚   â”œâ”€â”€ metadata/           # dataset registry, schema history, column metadata, lineage
+â”‚   â”œâ”€â”€ monitoring/         # execution metrics + Prometheus counters
+â”‚   â”œâ”€â”€ notifications/      # email/Slack alerts on run events
+â”‚   â””â”€â”€ warehouse/          # target/serving tables + query API (the "gold" layer)
+â”œâ”€â”€ docs/                   # requirements, scope, architecture, ADRs
+â”œâ”€â”€ monitoring/             # prometheus.yml, grafana provisioning
+â”œâ”€â”€ scripts/                # one-off scripts
+â”œâ”€â”€ sample_data/            # demo CSVs
+â”œâ”€â”€ .github/workflows/      # CI
+â””â”€â”€ manage.py
 ```
 
 ## Coding standards
@@ -83,7 +83,7 @@ dataflow-studio/
 - Type hints on public functions; docstrings on modules, services, and non-obvious functions.
 - DRF: `ModelViewSet` for CRUD, `@action` for verbs like `run`, `PageNumberPagination`,
   `DjangoFilterBackend` for filters, consistent error envelope from the common exception handler.
-- Querysets are always scoped to the requesting user/workspace — never leak another tenant's rows.
+- Querysets are always scoped to the requesting user/workspace â€” never leak another tenant's rows.
 - Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `chore:`, `refactor:`.
 
 ## How to build (per milestone)
@@ -92,7 +92,7 @@ For each version in `PROJECT_PLAN.md`, in order:
 
 1. Implement the features listed for that version.
 2. Write the tests the acceptance criteria imply.
-3. Run `make makemigrations && make migrate && make test` — the suite must be green.
+3. Run `make makemigrations && make migrate && make test` â€” the suite must be green.
 4. Run `make seed` (v0.1+) and confirm the demo path works.
 5. Commit with a conventional message and tag the version (`git tag v0.1.0`).
 6. Only then move to the next version.
