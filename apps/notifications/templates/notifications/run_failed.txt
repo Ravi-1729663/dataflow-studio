@@ -1,0 +1,4 @@
+Pipeline "{{ pipeline.name }}" run {{ run.id }} failed.
+
+Error: {{ run.error }}
+Retry count: {{ run.retry_count }}

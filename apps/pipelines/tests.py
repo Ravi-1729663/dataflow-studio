@@ -1,7 +1,10 @@
+import logging
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from apps.common.logging import CorrelationIdFilter
 from apps.datasources.models import DataSource
 from apps.etl import engine
 from apps.etl.exceptions import EtlError
@@ -172,3 +175,42 @@ def test_clone_creates_inactive_copy(pipeline):
     assert response.data["is_active"] is False
     assert response.data["id"] != str(pipeline.id)
     assert Pipeline.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_run_id_correlates_logs_from_an_unrelated_app(pipeline):
+    """apps.warehouse.services logs "customers upserted" with no run_id of its own — the
+    correlation id filter should tag it anyway, purely from execution context. Uses a plain
+    in-process collector handler (with the real filter attached) rather than capturing stderr,
+    since stream buffering makes fd-level capture timing-sensitive."""
+    records = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Collector()
+    handler.addFilter(CorrelationIdFilter())
+    warehouse_logger = logging.getLogger("dataflow.warehouse")
+    warehouse_logger.addHandler(handler)
+    try:
+        run = execute_pipeline(pipeline)
+    finally:
+        warehouse_logger.removeHandler(handler)
+
+    assert records
+    assert all(getattr(record, "run_id", None) == str(run.id) for record in records)
+
+
+@pytest.mark.django_db
+def test_failed_run_traceback_pinpoints_the_failing_step(pipeline):
+    pipeline.config["validation"] = {
+        "rules": [{"type": "required_columns", "columns": ["does_not_exist"]}]
+    }
+    pipeline.save()
+
+    run = execute_pipeline(pipeline)
+
+    assert run.status == PipelineRun.Status.FAILED
+    assert "apps/etl/validate.py" in run.traceback.replace("\\", "/")
+    assert "ValidationFailed" in run.traceback

@@ -8,17 +8,30 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.production
     ports:
       - "8000:8000"
-    depends_on: [db, redis]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   worker:
     build: .
-    command: celery -A config worker -l info
+    # --pool=solo: single process, no forking. Pipeline metrics live in whichever process
+    # incremented them (see config/celery.py's worker_init hook) — forked prefork children would
+    # each have their own registry, invisible to the /metrics server the parent starts.
+    command: celery -A config worker -l info --pool=solo
     env_file: .env
     environment:
       USE_POSTGRES: "1"
       CELERY_TASK_ALWAYS_EAGER: "0"
       DJANGO_SETTINGS_MODULE: config.settings.production
-    depends_on: [db, redis]
+    ports:
+      - "9808:9808"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   beat:
     build: .
@@ -27,7 +40,11 @@ services:
     environment:
       USE_POSTGRES: "1"
       DJANGO_SETTINGS_MODULE: config.settings.production
-    depends_on: [db, redis]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   db:
     image: postgres:16
@@ -39,11 +56,21 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dataflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   prometheus:
     image: prom/prometheus:latest
@@ -58,6 +85,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     ports:
       - "3000:3000"
     depends_on: [prometheus]

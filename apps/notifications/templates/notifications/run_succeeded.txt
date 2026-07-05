@@ -1,0 +1,4 @@
+Pipeline "{{ pipeline.name }}" run {{ run.id }} succeeded.
+
+Rows loaded: {{ run.metrics.rows_loaded }}
+Duration: {{ run.metrics.duration_seconds }}s

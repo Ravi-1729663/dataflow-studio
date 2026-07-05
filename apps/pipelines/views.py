@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.accounts.permissions import IsEngineerOrAdminOrReadOnly
+from apps.monitoring.tracing import inject_context
 
 from . import services
 from .models import Pipeline, PipelineRun
@@ -33,7 +34,11 @@ class PipelineViewSet(viewsets.ModelViewSet):
         already has by the time .delay() returns)."""
         pipeline = self.get_object()
         run = services.start_run(pipeline)
-        run_pipeline_task.delay(pipeline_id=str(pipeline.id), run_id=str(run.id))
+        run_pipeline_task.delay(
+            pipeline_id=str(pipeline.id),
+            run_id=str(run.id),
+            trace_context=inject_context(),
+        )
         run.refresh_from_db()
         return Response(PipelineRunSerializer(run).data, status=202)
 

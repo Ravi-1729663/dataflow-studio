@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsEngineerOrAdminOrReadOnly
+from apps.monitoring.tracing import inject_context
 from apps.pipelines import services as pipeline_services
 from apps.pipelines.models import DeadLetterRecord, PipelineRun
 from apps.pipelines.serializers import DeadLetterRecordSerializer, PipelineRunSerializer
@@ -48,7 +49,9 @@ class RetryFailedRunView(APIView):
 
         new_run = pipeline_services.start_run(run.pipeline)
         run_pipeline_task.delay(
-            pipeline_id=str(run.pipeline_id), run_id=str(new_run.id)
+            pipeline_id=str(run.pipeline_id),
+            run_id=str(new_run.id),
+            trace_context=inject_context(),
         )
         new_run.refresh_from_db()
         logger.info(

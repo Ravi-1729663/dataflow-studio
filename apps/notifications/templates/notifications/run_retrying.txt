@@ -1,0 +1,3 @@
+Pipeline "{{ pipeline.name }}" run {{ run.id }} is retrying (attempt {{ run.retry_count }}).
+
+Last error: {{ run.error }}

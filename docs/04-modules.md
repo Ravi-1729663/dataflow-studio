@@ -4,9 +4,14 @@ Each module is a Django app under `apps/`. Layering: `models` â†’ `services
 Acceptance criteria per version are in `PROJECT_PLAN.md`; this file is the per-module contract.
 
 ## common
-Shared building blocks. `BaseModel` (UUID pk + created/updated timestamps), JSON structured-logging
-formatter, domain exceptions (`ConnectorError`, `PipelineExecutionError`, validation errors), a DRF
-exception handler producing a consistent error envelope, and a `/api/health/` endpoint.
+Shared building blocks. `BaseModel` (UUID pk + created/updated timestamps), domain exceptions
+(`ConnectorError`, `PipelineExecutionError`, validation errors), a DRF exception handler producing
+a consistent error envelope. `logging.py` is the structured-logging core: `JSONFormatter` plus
+`CorrelationIdFilter`, which reads a `run_id` contextvar (`set_run_id`/`get_run_id`) and injects it
+into every log record automatically — so code that has never heard of a "run id" (e.g.
+`apps.warehouse`) still gets tagged correctly during a run's execution, without passing `extra=`
+everywhere by hand. `/api/health/` checks the database and, when async execution is actually in
+play, the Celery broker (skipped under `CELERY_TASK_ALWAYS_EAGER=1`, since no broker exists there).
 
 ## accounts
 Custom `User` with a `role` (ADMIN/ENGINEER/ANALYST/VIEWER). JWT auth via SimpleJWT (token +
@@ -88,12 +93,37 @@ complete snapshot. API: `datasets/`, `schema-versions/`, `columns/` (read-only),
 `datasets/<name>/lineage/` (the full graph) and `datasets/<name>/medallion/<layer>/` (DuckDB query).
 
 ## monitoring
-Prometheus counters/histograms (runs, durations, rows, failures) and an execution-dashboard API
-(success rate, failed jobs, runtime metrics). Correlation/run IDs threaded through logs; OTel traces.
+`metrics.py` defines the custom Prometheus counters/histogram (`dataflow_pipeline_runs_total` by
+status, `..._run_duration_seconds`, `..._rows_processed_total`, `..._run_retries_total`), recorded
+from `pipelines.services` at each terminal/retry state. **Pipeline execution happens in the Celery
+worker process, not web/gunicorn** — a counter incremented there lives in that process's own
+in-memory registry, invisible to django-prometheus's `/metrics` view in the web process. So the
+worker runs its own tiny Prometheus HTTP server (`config/celery.py`'s `worker_init` hook,
+`prometheus_client.start_http_server`), scraped by Prometheus as a second job
+(`monitoring/prometheus.yml`); Grafana/PromQL then aggregates both jobs with `sum()`. This only
+holds together because the worker runs `--pool=solo` (see `docker-compose.yml`) — Celery's default
+prefork pool forks child processes per task, each with its own registry the parent's HTTP server
+can't see. `services.get_dashboard(owner)` computes the execution dashboard (success rate, failed
+jobs, avg duration) from `PipelineRun` directly — duration is read out of the `metrics` JSONField in
+Python rather than an ORM aggregate, since JSON-key aggregation isn't equally portable across
+SQLite and PostgreSQL. `tracing.py` sets up an OpenTelemetry `TracerProvider` with a console
+exporter; `inject_context`/`extract_context` carry a run's trace context from the API's `run`
+action into the Celery task via a plain dict task kwarg (hand-rolled rather than the
+django/celery auto-instrumentation packages — a few lines with `opentelemetry-api` alone), so a
+run's spans cover both processes and `span.record_exception` pinpoints exactly which step failed.
+API: `GET dashboard/`.
 
 ## notifications
-Email + Slack webhook notifications on run failure, completion, and retry. Pluggable channels,
-templated messages, respects per-user/workspace preferences.
+`NotificationPreference` (per-user email/Slack opt-in; `slack_webhook_url` is validated to actually
+be a `hooks.slack.com` URL, since a user-controlled webhook target is otherwise an SSRF vector) and
+`NotificationLog` (audit trail: event/channel/recipient/success/error per attempt).
+`channels.py` is pluggable — `EmailChannel` (Django's `send_mail`) and `SlackChannel` (a plain
+`urllib.request` POST, no extra dependency) each just raise on failure. `services.notify(event,
+run)` renders one of three templates (`templates/notifications/run_{failed,succeeded,retrying}.txt`)
+and dispatches through whichever channels the pipeline owner has enabled, always recording a
+`NotificationLog` — a channel exception is caught and logged, never allowed to break the run itself.
+Called from `pipelines.services` on every success, retry, and terminal failure. API: `GET/PATCH
+preference/` (the caller's own), `GET logs/` (read-only, owner-scoped).
 
 ## warehouse
 The served "gold" layer: target tables (starting with a demo `Customer`) plus a read-only, filtered,

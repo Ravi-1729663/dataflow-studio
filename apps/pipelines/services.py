@@ -6,10 +6,16 @@ from pathlib import Path
 
 from django.conf import settings
 from django.utils import timezone
+from opentelemetry.trace import Status, StatusCode
 
+from apps.common.logging import set_run_id
 from apps.etl import engine
 from apps.etl.exceptions import EtlError, ValidationFailed
 from apps.metadata.services import record_ingest
+from apps.monitoring import metrics
+from apps.monitoring.tracing import tracer
+from apps.notifications.models import NotificationLog
+from apps.notifications.services import notify
 from apps.validation.services import persist_scorecard
 
 from .loaders import get_loader
@@ -47,7 +53,11 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
     """Run one attempt of the etl engine against an existing PipelineRun row.
 
     Raises the etl engine's ``EtlError`` on failure so the caller (a Celery task with retry +
-    backoff, or ``execute_pipeline`` below) decides whether to retry or give up.
+    backoff, or ``execute_pipeline`` below) decides whether to retry or give up. Every log line
+    emitted while this run is executing — including from code that has never heard of a "run id",
+    like apps.warehouse — is automatically tagged with this run's id (see
+    apps.common.logging.CorrelationIdFilter), and the whole attempt is one OpenTelemetry span so
+    a failure's exact step is visible in both the trace and the logs.
     """
     pipeline = run.pipeline
     target = pipeline.config.get("target", "customers")
@@ -56,58 +66,90 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
     run.status = PipelineRun.Status.RUNNING
     run.save(update_fields=["status", "updated_at"])
 
+    set_run_id(str(run.id))
     try:
-        result = engine.run(
-            extract_spec=_build_extract_spec(pipeline),
-            validation_spec=pipeline.config.get("validation", {}),
-            transform_spec=pipeline.config.get("transform", {}),
-            loader=loader,
-        )
-    except ValidationFailed as exc:
-        run.error = str(exc)
-        run.traceback = traceback_module.format_exc()
-        run.save(update_fields=["error", "traceback", "updated_at"])
-        if exc.outcome is not None:
-            persist_scorecard(run, exc.outcome)
-        logger.warning(
-            "pipeline run blocked by validation",
-            extra={"pipeline_id": pipeline.id, "run_id": run.id, "error": str(exc)},
-        )
-        raise
-    except EtlError as exc:
-        run.error = str(exc)
-        run.traceback = traceback_module.format_exc()
-        run.save(update_fields=["error", "traceback", "updated_at"])
-        logger.warning(
-            "pipeline run attempt failed",
-            extra={"pipeline_id": pipeline.id, "run_id": run.id, "error": str(exc)},
-        )
-        raise
+        with tracer.start_as_current_span(
+            "pipeline.execute_attempt",
+            attributes={"pipeline.id": str(pipeline.id), "run.id": str(run.id)},
+        ) as span:
+            try:
+                result = engine.run(
+                    extract_spec=_build_extract_spec(pipeline),
+                    validation_spec=pipeline.config.get("validation", {}),
+                    transform_spec=pipeline.config.get("transform", {}),
+                    loader=loader,
+                )
+            except ValidationFailed as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                run.error = str(exc)
+                run.traceback = traceback_module.format_exc()
+                run.save(update_fields=["error", "traceback", "updated_at"])
+                if exc.outcome is not None:
+                    persist_scorecard(run, exc.outcome)
+                logger.warning(
+                    "pipeline run blocked by validation",
+                    extra={
+                        "pipeline_id": pipeline.id,
+                        "run_id": run.id,
+                        "error": str(exc),
+                    },
+                )
+                raise
+            except EtlError as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                run.error = str(exc)
+                run.traceback = traceback_module.format_exc()
+                run.save(update_fields=["error", "traceback", "updated_at"])
+                logger.warning(
+                    "pipeline run attempt failed",
+                    extra={
+                        "pipeline_id": pipeline.id,
+                        "run_id": run.id,
+                        "error": str(exc),
+                    },
+                )
+                raise
 
-    run.status = PipelineRun.Status.SUCCEEDED
-    run.metrics = {
-        "rows_extracted": result.rows_extracted,
-        "rows_loaded": result.rows_loaded,
-        "duration_seconds": result.duration_seconds,
-        **result.load_result,
-    }
-    run.logs = result.step_logs
-    run.finished_at = timezone.now()
-    run.save(update_fields=["status", "metrics", "logs", "finished_at", "updated_at"])
-    if result.validation is not None:
-        persist_scorecard(run, result.validation)
-    record_ingest(pipeline, run, result.raw_df, result.transformed_df)
-    logger.info(
-        "pipeline run succeeded",
-        extra={"pipeline_id": pipeline.id, "run_id": run.id, "metrics": run.metrics},
-    )
-    return run
+            run.status = PipelineRun.Status.SUCCEEDED
+            run.metrics = {
+                "rows_extracted": result.rows_extracted,
+                "rows_loaded": result.rows_loaded,
+                "duration_seconds": result.duration_seconds,
+                **result.load_result,
+            }
+            run.logs = result.step_logs
+            run.finished_at = timezone.now()
+            run.save(
+                update_fields=["status", "metrics", "logs", "finished_at", "updated_at"]
+            )
+            span.set_attribute("rows_loaded", result.rows_loaded)
+
+            if result.validation is not None:
+                persist_scorecard(run, result.validation)
+            record_ingest(pipeline, run, result.raw_df, result.transformed_df)
+            metrics.record_run_succeeded(result.duration_seconds, result.rows_loaded)
+            notify(NotificationLog.Event.RUN_SUCCEEDED, run)
+            logger.info(
+                "pipeline run succeeded",
+                extra={
+                    "pipeline_id": pipeline.id,
+                    "run_id": run.id,
+                    "metrics": run.metrics,
+                },
+            )
+            return run
+    finally:
+        set_run_id(None)
 
 
 def mark_retrying(run: PipelineRun, retry_count: int) -> PipelineRun:
     run.status = PipelineRun.Status.RETRYING
     run.retry_count = retry_count
     run.save(update_fields=["status", "retry_count", "updated_at"])
+    metrics.record_run_retrying()
+    notify(NotificationLog.Event.RUN_RETRYING, run)
     return run
 
 
@@ -116,6 +158,8 @@ def mark_failed(run: PipelineRun) -> PipelineRun:
     run.status = PipelineRun.Status.FAILED
     run.finished_at = timezone.now()
     run.save(update_fields=["status", "finished_at", "updated_at"])
+    metrics.record_run_failed()
+    notify(NotificationLog.Event.RUN_FAILED, run)
     DeadLetterRecord.objects.get_or_create(
         run=run, defaults={"error": run.error, "traceback": run.traceback}
     )

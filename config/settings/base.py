@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     "apps.scheduler",
     "apps.validation",
     "apps.metadata",
+    "apps.monitoring",
+    "apps.notifications",
     "apps.warehouse",
 ]
 
@@ -173,6 +175,9 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "correlation_id": {"()": "apps.common.logging.CorrelationIdFilter"},
+    },
     "formatters": {
         "json": {"()": "apps.common.logging.JSONFormatter"},
     },
@@ -180,6 +185,7 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
+            "filters": ["correlation_id"],
         },
     },
     "root": {

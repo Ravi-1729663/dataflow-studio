@@ -6,3 +6,11 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["web:8000"]
+
+  # Pipeline execution happens in the Celery worker process, not web/gunicorn — its custom
+  # pipeline counters (apps.monitoring.metrics) live in that process's own registry, so it's
+  # scraped as a separate target rather than relying on the web job to see them.
+  - job_name: dataflow-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:9808"]
