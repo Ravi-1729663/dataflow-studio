@@ -1,13 +1,55 @@
-"""Celery entrypoint for pipeline execution. Runs synchronously in-process when CELERY_TASK_ALWAYS_EAGER=1."""
+"""Celery entrypoint for pipeline execution: retries with exponential backoff, then a dead-letter
+record if every attempt fails.
+
+Retries are a plain in-task loop rather than Celery's ``self.retry()``: Celery only re-queues a
+retry through the broker, and under ``CELERY_TASK_ALWAYS_EAGER=1`` (this project's zero-setup local
+dev default) ``self.retry()`` doesn't loop at all — it raises the ``Retry`` exception straight back
+to the caller. A manual loop behaves identically whether this runs on a real worker or synchronously
+in eager mode.
+"""
+
+import logging
+import time
 
 from celery import shared_task
+from django.conf import settings
 
-from .models import Pipeline
-from .services import execute_pipeline
+from apps.etl.exceptions import EtlError
+
+from . import services
+from .models import Pipeline, PipelineRun
+
+logger = logging.getLogger("dataflow.pipelines")
+
+MAX_RETRIES = 3
 
 
 @shared_task(name="pipelines.run_pipeline_task")
-def run_pipeline_task(pipeline_id: str) -> str:
+def run_pipeline_task(pipeline_id: str, run_id: str | None = None) -> str:
     pipeline = Pipeline.objects.get(pk=pipeline_id)
-    run = execute_pipeline(pipeline)
-    return str(run.id)
+    run = PipelineRun.objects.get(pk=run_id) if run_id else services.start_run(pipeline)
+
+    base_delay = getattr(settings, "PIPELINE_RETRY_BACKOFF_BASE_SECONDS", 2)
+    attempt = 0
+    while True:
+        try:
+            services.execute_attempt(run)
+            return str(run.id)
+        except EtlError:
+            if attempt >= MAX_RETRIES:
+                services.mark_failed(run)
+                return str(run.id)
+            attempt += 1
+            services.mark_retrying(run, attempt)
+            countdown = min(base_delay**attempt, 30)
+            logger.warning(
+                "pipeline run retrying",
+                extra={
+                    "pipeline_id": pipeline_id,
+                    "run_id": str(run.id),
+                    "retry_count": attempt,
+                    "countdown": countdown,
+                },
+            )
+            if countdown:
+                time.sleep(countdown)

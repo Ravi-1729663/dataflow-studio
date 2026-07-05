@@ -40,6 +40,7 @@ class Command(BaseCommand):
             owner=user,
             defaults={
                 "source": source,
+                "schedule": "*/2 * * * *",
                 "config": {
                     "validation": {
                         "required_columns": ["customer_id", "email"],
@@ -51,7 +52,9 @@ class Command(BaseCommand):
                 },
             },
         )
-        self.stdout.write(self.style.SUCCESS(f"pipeline: {pipeline.name}"))
+        self.stdout.write(
+            self.style.SUCCESS(f"pipeline: {pipeline.name} (cron: {pipeline.schedule})")
+        )
 
         run = execute_pipeline(pipeline)
         if run.status == PipelineRun.Status.SUCCEEDED:

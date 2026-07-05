@@ -30,6 +30,7 @@ class PipelineRun(BaseModel):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
         RUNNING = "RUNNING", "Running"
+        RETRYING = "RETRYING", "Retrying"
         SUCCEEDED = "SUCCEEDED", "Succeeded"
         FAILED = "FAILED", "Failed"
 
@@ -44,9 +45,28 @@ class PipelineRun(BaseModel):
     metrics = models.JSONField(default=dict, blank=True)
     logs = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
+    traceback = models.TextField(blank=True)
+    retry_count = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
         return f"{self.pipeline.name} run {self.id} ({self.status})"
+
+
+class DeadLetterRecord(BaseModel):
+    """A run that exhausted all automatic retries. Kept separate from PipelineRun so ops can see
+    what needs attention/reprocessing without scanning every FAILED run."""
+
+    run = models.OneToOneField(
+        PipelineRun, on_delete=models.CASCADE, related_name="dead_letter"
+    )
+    error = models.TextField()
+    traceback = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"DLQ: {self.run.pipeline.name} run {self.run.id}"

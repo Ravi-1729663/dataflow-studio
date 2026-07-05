@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.datasources",
     "apps.pipelines",
+    "apps.scheduler",
     "apps.warehouse",
 ]
 
@@ -149,6 +150,12 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# ---- Pipeline retries ----
+PIPELINE_RETRY_BACKOFF_BASE_SECONDS = int(
+    os.environ.get("PIPELINE_RETRY_BACKOFF_BASE_SECONDS", "2")
+)
 
 # ---- Security ----
 FERNET_KEY = os.environ.get("FERNET_KEY", "")
