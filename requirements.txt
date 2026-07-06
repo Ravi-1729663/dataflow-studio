@@ -28,6 +28,7 @@ cryptography>=42.0            # Fernet secret encryption
 # ---- Database driver & server ----
 psycopg2-binary>=2.9
 gunicorn>=22.0
+whitenoise>=6.6              # serves static files (admin/Swagger UI) without a separate nginx (v0.9)
 
 # ---- Data quality (v0.3) -- uncomment when you reach that milestone ----
 # great-expectations>=0.18

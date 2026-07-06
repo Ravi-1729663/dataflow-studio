@@ -123,6 +123,13 @@ read-only run history. `PipelineSerializer` scopes the `source` field's own quer
 requester's workspaces (v0.7) — without this, DRF's default `PrimaryKeyRelatedField` queryset would
 let a client reference another workspace's source by UUID even though they can't list it.
 
+**Reliability (v0.9):** `CELERY_TASK_ACKS_LATE` + `CELERY_TASK_REJECT_ON_WORKER_LOST` +
+`CELERY_BROKER_TRANSPORT_OPTIONS.visibility_timeout` (`config/settings/base.py`) mean a worker
+that dies mid-task (crash, OOM, redeploy) leaves its message redeliverable rather than lost — a
+replacement worker picks it back up and `run_pipeline_task` re-runs from scratch, safe only
+because every load is an idempotent upsert. Proven by `scripts/chaos_test.py`; see
+`docs/06-resilience.md` for the full scenario and result.
+
 ## scheduler
 Bridges `Pipeline.schedule` (a 5-field cron string) to django-celery-beat's
 `PeriodicTask`/`CrontabSchedule` — the only app that touches django-celery-beat models. A signal on

@@ -6,6 +6,8 @@
 
 **Status:** planning â†’ build Â· **License:** MIT Â· **Owner:** Ravi Sankar Reddy Bovilla
 
+[![CI](https://github.com/Ravi-1729663/dataflow-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Ravi-1729663/dataflow-studio/actions/workflows/ci.yml)
+
 ---
 
 ## What's in this repository right now
@@ -16,7 +18,9 @@ the empty module structure â€” ready for implementation, milestone by miles
 - [`PROJECT_PLAN.md`](PROJECT_PLAN.md) â€” scope, build strategy, and the v0.1â†’v1.0 milestone plan with
   tasks and acceptance criteria. **Start here.**
 - [`CLAUDE.md`](CLAUDE.md) â€” engineering conventions and build rules for Claude Code.
-- [`docs/`](docs/) â€” requirements, scope, architecture (with diagrams), module specs, and ADRs.
+- [`docs/`](docs/) â€” requirements, scope, architecture (with diagrams), module specs, deployment,
+  resilience testing, and ADRs.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) â€” how to get set up, conventions, and what CI checks for.
 
 ## How to build it (with Claude Code)
 
@@ -73,6 +77,9 @@ make docker-up
 # API :8000 Â· Prometheus :9090 Â· Grafana :3000
 ```
 
+Deploying it (Render, as-code) is in [`docs/05-deployment.md`](docs/05-deployment.md). Load-test
+and chaos-test methodology + latest results are in [`docs/06-resilience.md`](docs/06-resilience.md).
+
 ## Architecture (summary)
 
 A **modular monolith** in Django with Celery workers. Requests hit the DRF API; pipelines are
@@ -117,7 +124,7 @@ monitoring/     prometheus + grafana config
 | Storage       | PostgreSQL (SQLite local), DuckDB + Parquet       |
 | Data          | pandas                                           |
 | Observability | django-prometheus, Grafana, structured logs, OTel |
-| DevOps        | Docker, docker-compose, GitHub Actions           |
+| DevOps        | Docker, docker-compose, GitHub Actions, Render (Blueprint), Locust |
 
 ## Roadmap
 

@@ -120,6 +120,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # Serves admin/Swagger UI assets straight from gunicorn with far-future cache headers — no
+    # separate nginx/CDN needed at Render free-tier scale (v0.9).
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -172,6 +180,21 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# ---- Celery reliability (v0.9 chaos test) ----
+# A worker killed mid-task (crash, OOM, deploy) would otherwise silently drop whatever it was
+# running: acks_late means the broker only removes a task's message once it actually finishes,
+# not the moment it's handed to a worker, and reject_on_worker_lost re-queues it immediately if
+# the worker dies. visibility_timeout bounds how long a message can sit "in flight" before Redis
+# assumes the consumer died and redelivers it — set high enough in production to exceed the
+# longest real task, short in the chaos test so recovery is observable in seconds, not the hour
+# default. worker_prefetch_multiplier=1 stops one slow task from hogging others behind it in the
+# same worker's prefetch buffer.
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": int(os.environ.get("CELERY_VISIBILITY_TIMEOUT", "3600"))
+}
 
 # ---- Pipeline retries ----
 PIPELINE_RETRY_BACKOFF_BASE_SECONDS = int(

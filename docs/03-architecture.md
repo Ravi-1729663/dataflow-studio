@@ -99,6 +99,27 @@ flowchart TB
     grafana[grafana] --> prometheus
 ```
 
+The same topology deploys to Render as-code via `render.yaml` (a Blueprint: web + worker + beat +
+managed Postgres + managed Redis) — see [`docs/05-deployment.md`](05-deployment.md).
+Prometheus/Grafana aren't part of the Render deploy (no free-tier host for them); they're a
+docker-compose-only concern for now.
+
+## CI/CD (v0.9)
+
+```mermaid
+flowchart LR
+    PR[push / PR] --> Backend[backend: ruff + black + pytest]
+    PR --> Frontend[frontend: oxlint + tsc + vite build]
+    Backend --> Deploy{on main, with\nRENDER_DEPLOY_HOOK_URL?}
+    Frontend --> Deploy
+    Deploy -->|yes| Hook[POST Render deploy hook]
+    Deploy -->|no| Skip[skip, still green]
+```
+
+`.github/workflows/ci.yml` runs `backend` and `frontend` on every push/PR; `deploy` only runs on
+`main` and only calls out to Render if the deploy-hook secret is configured, so a fork or PR build
+never fails for lacking deploy access.
+
 ## Why each choice â€” and what was rejected
 
 | Decision            | Chosen                    | Why                                                        | Rejected & why not                                                                 |
@@ -111,11 +132,17 @@ flowchart TB
 | Auth                | JWT (SimpleJWT) + RBAC    | Stateless, standard for SPA/API, simple to reason about     | Session cookies (worse for SPA/mobile); OAuth server (overkill for internal tool)   |
 | Observability       | Prometheus + Grafana + JSON logs + OTel | Industry-standard metrics/dashboards/tracing  | Cloud-only APM (cost + vendor lock-in for a local-first project)                    |
 | Docs                | drf-spectacular (OpenAPI) | Auto-generated, always in sync, Swagger UI                  | Hand-written docs (drift out of date immediately)                                   |
+| Hosting             | Render (free tier, Blueprint) | Postgres+Redis+multi-service free tier, deploy-as-code, zero card required | Fly.io (less generous free Postgres); Heroku (no free tier anymore); AWS/GCP (way over-provisioned for portfolio scale) |
+| CI                  | GitHub Actions            | Free for public repos, native to where the code already lives | CircleCI/Travis (another account, no material benefit here)                       |
+| Load/chaos tooling  | Locust + a docker-compose kill/recreate script | Locust already Python (matches the stack); the chaos scenario only needs `docker kill`/`docker compose up`, no dedicated framework | Chaos Mesh/Gremlin (Kubernetes-oriented, this project isn't on k8s)                |
 
 ## Cross-cutting concerns
 
 - **Security:** JWT + RBAC + workspace isolation; Fernet-encrypted credentials; audit logs; rate
   limiting; PII masking; least privilege. (v0.7)
+- **Delivery & resilience:** CI on every push/PR (lint + test + build), deploy-as-code (Render
+  Blueprint), a load test proving the API stays fast under concurrent users, and a chaos test
+  proving a run recovers cleanly if the worker processing it dies mid-flight. (v0.9)
 - **Reliability:** idempotent loads, retries with backoff, blocking validation, dead-letter records,
   health checks. (v0.2, v0.3)
 - **Scalability path:** stateless API behind more gunicorn workers; add Celery workers horizontally;
