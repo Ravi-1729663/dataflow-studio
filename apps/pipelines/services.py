@@ -139,6 +139,7 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
                 "rows_extracted": result.rows_extracted,
                 "rows_loaded": result.rows_loaded,
                 "duration_seconds": result.duration_seconds,
+                **({"clean": result.clean_stats} if result.clean_stats else {}),
                 **result.load_result,
             }
             run.logs = result.step_logs

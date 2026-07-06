@@ -4,8 +4,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import medallion, services
-from .models import ColumnMetadata, Dataset, SchemaVersion
+from .models import ColumnAnomaly, ColumnMetadata, Dataset, SchemaVersion
 from .serializers import (
+    ColumnAnomalySerializer,
     ColumnMetadataSerializer,
     DatasetSerializer,
     SchemaVersionSerializer,
@@ -30,6 +31,15 @@ class ColumnMetadataViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ColumnMetadataSerializer
     filterset_fields = ["dataset__name"]
     queryset = ColumnMetadata.objects.select_related("dataset").all()
+
+
+class ColumnAnomalyViewSet(viewsets.ReadOnlyModelViewSet):
+    """Statistical outliers flagged by ``services.detect_anomalies`` — a z-score check against
+    each column's running baseline, recorded on every ingest."""
+
+    serializer_class = ColumnAnomalySerializer
+    filterset_fields = ["dataset__name", "column"]
+    queryset = ColumnAnomaly.objects.select_related("dataset").all()
 
 
 class LineageGraphView(APIView):

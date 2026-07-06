@@ -5,9 +5,16 @@ import { dataSources as dataSourcesApi } from "../lib/resources";
 import type { DataSource, SourceType } from "../lib/types";
 import { WorkspaceGate } from "../components/WorkspaceGate";
 
-const SOURCE_TYPES: SourceType[] = ["FILE", "POSTGRES", "REST_API"];
+const SOURCE_TYPES: SourceType[] = ["FILE", "POSTGRES", "REST_API", "S3"];
 
-function configFieldsFor(sourceType: SourceType) {
+interface ConfigField {
+  key: string;
+  label: string;
+  placeholder: string;
+  required?: boolean;
+}
+
+function configFieldsFor(sourceType: SourceType): ConfigField[] {
   switch (sourceType) {
     case "FILE":
       return [{ key: "path", label: "File path", placeholder: "sample_data/customers.csv" }];
@@ -18,6 +25,29 @@ function configFieldsFor(sourceType: SourceType) {
       ];
     case "REST_API":
       return [{ key: "url", label: "URL", placeholder: "https://api.example.com/customers" }];
+    case "S3":
+      return [
+        { key: "bucket", label: "Bucket", placeholder: "my-bucket" },
+        { key: "key", label: "Object key", placeholder: "customers.csv" },
+        {
+          key: "endpoint_url",
+          label: "Endpoint URL (optional — leave blank for real AWS S3)",
+          placeholder: "http://localhost:9000",
+          required: false,
+        },
+        {
+          key: "aws_access_key_id",
+          label: "Access key ID (optional — leave blank to use IAM credentials)",
+          placeholder: "minioadmin",
+          required: false,
+        },
+        {
+          key: "aws_secret_access_key",
+          label: "Secret access key (optional)",
+          placeholder: "minioadmin",
+          required: false,
+        },
+      ];
   }
 }
 
@@ -86,7 +116,7 @@ function NewDataSourceForm({
             placeholder={field.placeholder}
             value={configValues[field.key] ?? ""}
             onChange={(e) => setConfigValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-            required
+            required={field.required ?? true}
           />
         </label>
       ))}

@@ -14,9 +14,23 @@ from apps.pipelines.models import Pipeline, PipelineRun
 from apps.warehouse.services import get_dataframe as _get_customers_dataframe
 
 from . import medallion
-from .models import ColumnMetadata, Dataset, LineageEdge, LineageNode, SchemaVersion
+from .models import (
+    ColumnAnomaly,
+    ColumnMetadata,
+    ColumnStats,
+    Dataset,
+    LineageEdge,
+    LineageNode,
+    SchemaVersion,
+)
 
 logger = logging.getLogger("dataflow.metadata")
+
+# A z-score check needs some history before it means anything; below this many accumulated
+# samples (rows, across however many runs it took to reach that) a column is still establishing
+# its baseline, not yet eligible to be flagged.
+ANOMALY_MIN_BASELINE_SAMPLES = 3
+ANOMALY_Z_THRESHOLD = 3.0
 
 # Maps a Dataset name (== a pipeline's config["target"]) to the callable that snapshots its
 # current gold-layer state. Extend this as more warehouse targets land. "customers" and
@@ -107,6 +121,75 @@ def record_schema(
     return version
 
 
+def _numeric_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+
+def detect_anomalies(
+    dataset: Dataset, run: PipelineRun, df: pd.DataFrame
+) -> list[ColumnAnomaly]:
+    """Flags this run's mean for each numeric column as an anomaly if it's more than
+    ``ANOMALY_Z_THRESHOLD`` standard deviations from that column's running baseline, then folds
+    this run's batch into the baseline regardless (so the baseline keeps adapting even when
+    nothing is flagged). The baseline itself (``ColumnStats``) is updated via Welford's parallel
+    algorithm — merging a new batch's (count, mean, variance) into a running aggregate — rather
+    than storing every run's raw values, so this stays O(columns) in space no matter how many
+    runs a dataset has seen.
+    """
+    anomalies = []
+    for column in _numeric_columns(df):
+        values = df[column].dropna()
+        if values.empty:
+            continue
+
+        batch_count = len(values)
+        batch_mean = float(values.mean())
+        batch_variance = float(values.var(ddof=0)) if batch_count > 1 else 0.0
+
+        stats, _ = ColumnStats.objects.get_or_create(dataset=dataset, column=column)
+
+        if stats.count >= ANOMALY_MIN_BASELINE_SAMPLES and stats.stddev > 0:
+            z_score = (batch_mean - stats.mean) / stats.stddev
+            if abs(z_score) > ANOMALY_Z_THRESHOLD:
+                anomaly = ColumnAnomaly.objects.create(
+                    dataset=dataset,
+                    run=run,
+                    column=column,
+                    value=batch_mean,
+                    baseline_mean=stats.mean,
+                    baseline_stddev=stats.stddev,
+                    z_score=z_score,
+                )
+                anomalies.append(anomaly)
+                logger.warning(
+                    "statistical anomaly detected",
+                    extra={
+                        "dataset": dataset.name,
+                        "column": column,
+                        "value": batch_mean,
+                        "baseline_mean": stats.mean,
+                        "baseline_stddev": stats.stddev,
+                        "z_score": z_score,
+                    },
+                )
+
+        new_count = stats.count + batch_count
+        delta = batch_mean - stats.mean
+        new_mean = stats.mean + delta * batch_count / new_count
+        new_m2 = (
+            stats.m2
+            + batch_variance * batch_count
+            + delta**2 * stats.count * batch_count / new_count
+        )
+
+        stats.count = new_count
+        stats.mean = new_mean
+        stats.m2 = new_m2
+        stats.save(update_fields=["count", "mean", "m2", "updated_at"])
+
+    return anomalies
+
+
 def sync_lineage(pipeline: Pipeline, dataset: Dataset, rename_map: dict) -> None:
     """Ensure SOURCE -> BRONZE -> SILVER -> GOLD nodes + edges exist for this pipeline."""
     source = pipeline.source
@@ -195,6 +278,7 @@ def record_ingest(
     rename_map = pipeline.config.get("transform", {}).get("rename", {})
 
     record_schema(dataset, run, raw_df, rename_map)
+    detect_anomalies(dataset, run, raw_df)
     sync_lineage(pipeline, dataset, rename_map)
 
     partition_date = (run.started_at or run.created_at).date()

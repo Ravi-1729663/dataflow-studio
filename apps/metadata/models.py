@@ -77,6 +77,69 @@ class ColumnMetadata(BaseModel):
         return f"{self.dataset.name}.{self.name}"
 
 
+class ColumnStats(BaseModel):
+    """The running statistical baseline for one numeric column of a dataset, updated on every
+    ingest via Welford's online algorithm (``mean``/``m2`` — ``m2`` is the running sum of squared
+    deviations from the mean, from which variance/stddev are derived) rather than storing every
+    run's raw values. This is the baseline ``services.detect_anomalies`` compares each new run
+    against."""
+
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, related_name="column_stats"
+    )
+    column = models.CharField(max_length=200)
+    count = models.PositiveIntegerField(default=0)
+    mean = models.FloatField(default=0.0)
+    m2 = models.FloatField(default=0.0)
+
+    class Meta:
+        ordering = ["column"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dataset", "column"], name="unique_dataset_column_stats"
+            )
+        ]
+
+    @property
+    def variance(self) -> float:
+        return self.m2 / self.count if self.count > 0 else 0.0
+
+    @property
+    def stddev(self) -> float:
+        return self.variance**0.5
+
+    def __str__(self) -> str:
+        return f"{self.dataset.name}.{self.column} stats (n={self.count})"
+
+
+class ColumnAnomaly(BaseModel):
+    """A single run's numeric column mean flagged as a statistical outlier against the running
+    baseline (``ColumnStats``) — a z-score check, the same class of technique data-observability
+    tools (e.g. Monte Carlo) build on, just without the ML."""
+
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, related_name="anomalies"
+    )
+    run = models.ForeignKey(
+        PipelineRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anomalies",
+    )
+    column = models.CharField(max_length=200)
+    value = models.FloatField()
+    baseline_mean = models.FloatField()
+    baseline_stddev = models.FloatField()
+    z_score = models.FloatField()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.dataset.name}.{self.column} z={self.z_score:.2f}"
+
+
 class LineageNode(BaseModel):
     class Layer(models.TextChoices):
         SOURCE = "SOURCE", "Source"

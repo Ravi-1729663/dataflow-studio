@@ -1,4 +1,5 @@
-"""Orchestrates extract -> validate -> transform -> load and reports metrics + step logs.
+"""Orchestrates extract -> clean -> validate -> transform -> load and reports metrics + step
+logs.
 
 Framework-agnostic: every argument is a plain dict/dataclass or callable. No Django imports.
 """
@@ -7,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from . import clean as clean_step
 from . import extract as extract_step
 from . import incremental as incremental_step
 from . import load as load_step
@@ -24,6 +26,7 @@ class EngineResult:
     validation: object = (
         None  # validate_step.ValidationOutcome, left untyped to avoid import noise
     )
+    clean_stats: dict = field(default_factory=dict)
     duration_seconds: float = 0.0
     # Raw/transformed DataFrames, exposed so a caller (pipelines app) can snapshot medallion
     # (bronze/silver) layers. repr=False keeps them out of log lines.
@@ -72,6 +75,15 @@ def run(
             f"(watermark {watermark!r} -> {new_watermark!r})"
         )
 
+    clean_spec = transform_spec.get("clean")
+    clean_stats: dict = {}
+    if clean_spec:
+        rows_before_clean = len(raw_df)
+        raw_df, clean_stats = clean_step.clean(raw_df, clean_spec)
+        step_logs.append(
+            f"cleaned: {clean_stats}, {len(raw_df)}/{rows_before_clean} row(s) kept"
+        )
+
     outcome = validate_step.validate(raw_df, validation_spec)
     step_logs.append(f"validation passed: overall_score={outcome.overall_score}")
 
@@ -89,6 +101,7 @@ def run(
         step_logs=step_logs,
         load_result=load_result,
         validation=outcome,
+        clean_stats=clean_stats,
         duration_seconds=time.monotonic() - started,
         raw_df=raw_df,
         transformed_df=transformed_df,

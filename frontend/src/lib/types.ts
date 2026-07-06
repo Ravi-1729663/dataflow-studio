@@ -34,7 +34,7 @@ export interface WorkspaceMembership {
   created_at: string;
 }
 
-export type SourceType = "FILE" | "POSTGRES" | "REST_API";
+export type SourceType = "FILE" | "POSTGRES" | "REST_API" | "S3";
 
 export interface DataSource {
   id: string;
@@ -73,6 +73,14 @@ export interface ValidationRule {
   severity?: Severity;
 }
 
+export interface CleanConfig {
+  trim?: string[];
+  lowercase?: string[];
+  fill_null?: Record<string, string>;
+  drop_rows_missing?: string[];
+  min_present_fraction?: number;
+}
+
 export interface PipelineConfig {
   validation?: { rules: ValidationRule[] };
   transform?: {
@@ -80,6 +88,7 @@ export interface PipelineConfig {
     cast?: Record<string, string>;
     drop_duplicates?: boolean;
     select?: string[];
+    clean?: CleanConfig;
   };
   target?: string;
   incremental?: { column: string; grace_seconds?: number };
@@ -179,4 +188,16 @@ export interface LineageGraph {
   dataset: string;
   nodes: LineageNodeRef[];
   edges: LineageEdge[];
+}
+
+export interface ColumnAnomaly {
+  id: string;
+  dataset: string;
+  run: string | null;
+  column: string;
+  value: number;
+  baseline_mean: number;
+  baseline_stddev: number;
+  z_score: number;
+  created_at: string;
 }

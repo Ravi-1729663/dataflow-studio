@@ -2,6 +2,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    ColumnAnomalyViewSet,
     ColumnMetadataViewSet,
     DatasetViewSet,
     LineageGraphView,
@@ -13,6 +14,7 @@ router = DefaultRouter()
 router.register("datasets", DatasetViewSet, basename="dataset")
 router.register("schema-versions", SchemaVersionViewSet, basename="schema-version")
 router.register("columns", ColumnMetadataViewSet, basename="column-metadata")
+router.register("anomalies", ColumnAnomalyViewSet, basename="column-anomaly")
 
 urlpatterns = [
     path(

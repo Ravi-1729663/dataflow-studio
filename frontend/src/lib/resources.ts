@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type {
+  ColumnAnomaly,
   DashboardStats,
   DataSource,
   Dataset,
@@ -73,6 +74,7 @@ export const metadata = {
   datasets: () => api.get<Paginated<Dataset>>("/metadata/datasets/"),
   lineage: (datasetName: string) =>
     api.get<LineageGraph>(`/metadata/datasets/${datasetName}/lineage/`),
+  anomalies: () => api.get<Paginated<ColumnAnomaly>>("/metadata/anomalies/"),
 };
 
 export const monitoring = {

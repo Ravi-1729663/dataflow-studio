@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../lib/api";
 import { dataSources as dataSourcesApi, pipelines as pipelinesApi } from "../lib/resources";
-import type { DataSource, PipelineConfig, ValidationRule } from "../lib/types";
+import type { CleanConfig, DataSource, PipelineConfig, ValidationRule } from "../lib/types";
 import { RuleEditor } from "../components/RuleEditor";
 import { WorkspaceGate } from "../components/WorkspaceGate";
 
@@ -24,6 +24,11 @@ function PipelineBuilder({ workspaceId }: { workspaceId: string }) {
   ]);
   const [renamePairs, setRenamePairs] = useState<Array<{ from: string; to: string }>>([]);
   const [incrementalColumn, setIncrementalColumn] = useState("");
+  const [trimColumns, setTrimColumns] = useState("");
+  const [lowercaseColumns, setLowercaseColumns] = useState("");
+  const [fillNullPairs, setFillNullPairs] = useState<Array<{ column: string; value: string }>>([]);
+  const [dropRowsMissing, setDropRowsMissing] = useState("");
+  const [minPresentFraction, setMinPresentFraction] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -45,6 +50,12 @@ function PipelineBuilder({ workspaceId }: { workspaceId: string }) {
   const removeRenamePair = (index: number) =>
     setRenamePairs((prev) => prev.filter((_, i) => i !== index));
 
+  const addFillNullPair = () => setFillNullPairs((prev) => [...prev, { column: "", value: "" }]);
+  const updateFillNullPair = (index: number, field: "column" | "value", value: string) =>
+    setFillNullPairs((prev) => prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  const removeFillNullPair = (index: number) =>
+    setFillNullPairs((prev) => prev.filter((_, i) => i !== index));
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -54,12 +65,29 @@ function PipelineBuilder({ workspaceId }: { workspaceId: string }) {
     }
     setBusy(true);
     try {
+      const parseColumnsList = (s: string) =>
+        s.split(",").map((c) => c.trim()).filter(Boolean);
+
+      const clean: CleanConfig = {};
+      const trimList = parseColumnsList(trimColumns);
+      if (trimList.length) clean.trim = trimList;
+      const lowercaseList = parseColumnsList(lowercaseColumns);
+      if (lowercaseList.length) clean.lowercase = lowercaseList;
+      const fillNullEntries = fillNullPairs.filter((p) => p.column && p.value);
+      if (fillNullEntries.length) {
+        clean.fill_null = Object.fromEntries(fillNullEntries.map((p) => [p.column, p.value]));
+      }
+      const dropList = parseColumnsList(dropRowsMissing);
+      if (dropList.length) clean.drop_rows_missing = dropList;
+      if (minPresentFraction) clean.min_present_fraction = Number(minPresentFraction);
+
       const config: PipelineConfig = {
         validation: { rules },
         transform: {
           rename: Object.fromEntries(
             renamePairs.filter((p) => p.from && p.to).map((p) => [p.from, p.to]),
           ),
+          ...(Object.keys(clean).length ? { clean } : {}),
         },
         target,
         ...(incrementalColumn ? { incremental: { column: incrementalColumn } } : {}),
@@ -129,6 +157,67 @@ function PipelineBuilder({ workspaceId }: { workspaceId: string }) {
             onChange={(e) => setIncrementalColumn(e.target.value)}
           />
         </label>
+
+        <fieldset>
+          <legend>Data cleansing (optional — runs before validation, so a fixable row doesn't block the whole run)</legend>
+          <label>
+            Trim whitespace on columns
+            <input
+              placeholder="email, first_name"
+              value={trimColumns}
+              onChange={(e) => setTrimColumns(e.target.value)}
+            />
+          </label>
+          <label>
+            Lowercase columns
+            <input
+              placeholder="email"
+              value={lowercaseColumns}
+              onChange={(e) => setLowercaseColumns(e.target.value)}
+            />
+          </label>
+          <label>
+            Drop rows missing any of these columns
+            <input
+              placeholder="email"
+              value={dropRowsMissing}
+              onChange={(e) => setDropRowsMissing(e.target.value)}
+            />
+          </label>
+          <label>
+            Drop rows with less than this fraction of columns populated (0-1, optional)
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.1}
+              placeholder="0.5"
+              value={minPresentFraction}
+              onChange={(e) => setMinPresentFraction(e.target.value)}
+            />
+          </label>
+          <label>Fill missing values with a default</label>
+          {fillNullPairs.map((pair, index) => (
+            <div key={index} className="rename-pair">
+              <input
+                placeholder="column"
+                value={pair.column}
+                onChange={(e) => updateFillNullPair(index, "column", e.target.value)}
+              />
+              <input
+                placeholder="default value"
+                value={pair.value}
+                onChange={(e) => updateFillNullPair(index, "value", e.target.value)}
+              />
+              <button type="button" className="ghost" onClick={() => removeFillNullPair(index)}>
+                Remove
+              </button>
+            </div>
+          ))}
+          <button type="button" className="ghost" onClick={addFillNullPair}>
+            + Add fill-null default
+          </button>
+        </fieldset>
 
         <fieldset>
           <legend>Validation rules</legend>

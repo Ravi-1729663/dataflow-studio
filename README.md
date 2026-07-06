@@ -121,8 +121,8 @@ monitoring/     prometheus + grafana config
 | Auth          | JWT (SimpleJWT), custom RBAC                      |
 | Frontend      | React + TypeScript (Vite), react-router, recharts |
 | Async / cron  | Celery, Redis, django-celery-beat                |
-| Storage       | PostgreSQL (SQLite local), DuckDB + Parquet       |
-| Data          | pandas                                           |
+| Storage       | PostgreSQL (SQLite local), DuckDB + Parquet, S3-compatible object storage (boto3 + MinIO) |
+| Data          | pandas, Welford's-algorithm statistical anomaly detection |
 | Observability | django-prometheus, Grafana, structured logs, OTel |
 | DevOps        | Docker, docker-compose, GitHub Actions, Render (Blueprint), Locust |
 

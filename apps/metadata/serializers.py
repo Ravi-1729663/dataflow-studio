@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import ColumnMetadata, Dataset, SchemaVersion
+from .models import ColumnAnomaly, ColumnMetadata, Dataset, SchemaVersion
 
 
 class DatasetSerializer(serializers.ModelSerializer):
@@ -42,6 +42,25 @@ class SchemaVersionSerializer(serializers.ModelSerializer):
             "removed_columns",
             "renamed_columns",
             "is_drift",
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class ColumnAnomalySerializer(serializers.ModelSerializer):
+    dataset = serializers.SlugRelatedField(slug_field="name", read_only=True)
+
+    class Meta:
+        model = ColumnAnomaly
+        fields = (
+            "id",
+            "dataset",
+            "run",
+            "column",
+            "value",
+            "baseline_mean",
+            "baseline_stddev",
+            "z_score",
             "created_at",
         )
         read_only_fields = fields

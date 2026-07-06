@@ -9,7 +9,15 @@ from apps.pipelines.services import execute_pipeline
 from apps.warehouse.models import Customer
 
 from . import medallion, services
-from .models import ColumnMetadata, Dataset, LineageEdge, LineageNode, SchemaVersion
+from .models import (
+    ColumnAnomaly,
+    ColumnMetadata,
+    ColumnStats,
+    Dataset,
+    LineageEdge,
+    LineageNode,
+    SchemaVersion,
+)
 
 User = get_user_model()
 
@@ -134,6 +142,67 @@ def test_record_schema_detects_a_rename_using_the_transform_rename_map(pipeline)
     assert version.renamed_columns == [{"from": "cust_id", "to": "customer_id"}]
     assert version.added_columns == []
     assert version.removed_columns == []
+
+
+# ---- anomaly detection --------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_detect_anomalies_establishes_baseline_without_flagging(pipeline):
+    dataset = services.register_dataset(pipeline)
+    df = pd.DataFrame({"amount": [98, 100, 102]})
+
+    anomalies = services.detect_anomalies(dataset, run=None, df=df)
+
+    assert anomalies == []
+    stats = ColumnStats.objects.get(dataset=dataset, column="amount")
+    assert stats.count == 3
+    assert stats.mean == pytest.approx(100.0)
+
+
+@pytest.mark.django_db
+def test_detect_anomalies_flags_a_statistical_outlier_after_baseline_established(
+    pipeline,
+):
+    dataset = services.register_dataset(pipeline)
+    baseline_df = pd.DataFrame({"amount": [98, 100, 102, 99, 101]})
+    services.detect_anomalies(dataset, run=None, df=baseline_df)
+
+    outlier_df = pd.DataFrame({"amount": [500, 510, 490]})
+    anomalies = services.detect_anomalies(dataset, run=None, df=outlier_df)
+
+    assert len(anomalies) == 1
+    assert anomalies[0].column == "amount"
+    assert abs(anomalies[0].z_score) > 3.0
+    assert ColumnAnomaly.objects.filter(dataset=dataset).count() == 1
+
+
+@pytest.mark.django_db
+def test_detect_anomalies_ignores_non_numeric_columns(pipeline):
+    dataset = services.register_dataset(pipeline)
+    df = pd.DataFrame({"email": ["a@x.com", "b@x.com"]})
+
+    anomalies = services.detect_anomalies(dataset, run=None, df=df)
+
+    assert anomalies == []
+    assert not ColumnStats.objects.filter(dataset=dataset).exists()
+
+
+@pytest.mark.django_db
+def test_detect_anomalies_baseline_keeps_adapting_after_a_flagged_run(pipeline):
+    """An anomaly is flagged but still folded into the baseline — a sustained shift eventually
+    becomes the new normal rather than triggering forever."""
+    dataset = services.register_dataset(pipeline)
+    services.detect_anomalies(
+        dataset, run=None, df=pd.DataFrame({"amount": [98, 100, 102]})
+    )
+
+    services.detect_anomalies(
+        dataset, run=None, df=pd.DataFrame({"amount": [500, 500, 500]})
+    )
+
+    stats = ColumnStats.objects.get(dataset=dataset, column="amount")
+    assert stats.mean > 100.0
 
 
 # ---- lineage ------------------------------------------------------------------------------------
@@ -334,3 +403,23 @@ def test_schema_versions_api_lists_history(tmp_path, settings, user):
     assert response.status_code == 200
     assert response.data["count"] == 2
     assert any(row["is_drift"] for row in response.data["results"])
+
+
+@pytest.mark.django_db
+def test_anomalies_api_lists_flagged_columns(user):
+    pipeline = _make_pipeline(user, "unused.csv")
+    dataset = services.register_dataset(pipeline)
+    services.detect_anomalies(
+        dataset, run=None, df=pd.DataFrame({"amount": [98, 100, 102, 99, 101]})
+    )
+    services.detect_anomalies(
+        dataset, run=None, df=pd.DataFrame({"amount": [500, 510, 490]})
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.get("/api/v1/metadata/anomalies/", {"dataset__name": "customers"})
+
+    assert response.status_code == 200
+    assert response.data["count"] == 1
+    assert response.data["results"][0]["column"] == "amount"

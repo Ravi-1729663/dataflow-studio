@@ -1,6 +1,7 @@
 """Unit tests for the framework-agnostic etl engine. No Django, no DB."""
 
 import csv
+import io
 import json
 import urllib.error
 import urllib.parse
@@ -10,6 +11,7 @@ import pandas as pd
 import pytest
 
 from apps.etl import engine
+from apps.etl.clean import clean
 from apps.etl.exceptions import ExtractError, TransformError, ValidationFailed
 from apps.etl.extract import extract
 from apps.etl.incremental import compute_watermark, filter_incremental
@@ -235,6 +237,58 @@ def test_extract_rest_api_unexpected_results_shape_raises():
             extract("rest_api", {"url": "https://api.example.com/items"})
     finally:
         extract_module.urllib.request.urlopen = original
+
+
+# ---- s3 -------------------------------------------------------------------------------------------
+
+
+class _FakeS3Client:
+    def __init__(self, body_bytes=None, error=None):
+        self._body_bytes = body_bytes
+        self._error = error
+
+    def get_object(self, Bucket, Key):
+        if self._error:
+            raise self._error
+        return {"Body": io.BytesIO(self._body_bytes)}
+
+    def head_object(self, Bucket, Key):
+        if self._error:
+            raise self._error
+
+
+def test_extract_s3_reads_csv_object(monkeypatch):
+    import boto3
+
+    csv_bytes = b"customer_id,email\n1,a@x.com\n2,b@x.com\n"
+    monkeypatch.setattr(
+        boto3, "client", lambda service, **kwargs: _FakeS3Client(body_bytes=csv_bytes)
+    )
+
+    df = extract("s3", {"bucket": "my-bucket", "key": "customers.csv"})
+
+    assert list(df.columns) == ["customer_id", "email"]
+    assert len(df) == 2
+
+
+def test_extract_s3_missing_config_raises():
+    with pytest.raises(ExtractError):
+        extract("s3", {"bucket": "my-bucket"})
+
+
+def test_extract_s3_client_error_raises_extract_error(monkeypatch):
+    import boto3
+    from botocore.exceptions import ClientError
+
+    error = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "GetObject"
+    )
+    monkeypatch.setattr(
+        boto3, "client", lambda service, **kwargs: _FakeS3Client(error=error)
+    )
+
+    with pytest.raises(ExtractError):
+        extract("s3", {"bucket": "my-bucket", "key": "missing.csv"})
 
 
 # ---- incremental --------------------------------------------------------------------------------
@@ -484,6 +538,93 @@ def test_transform_missing_select_column_raises():
     df = pd.DataFrame({"a": [1]})
     with pytest.raises(TransformError):
         transform(df, {"select": ["b"]})
+
+
+# ---- clean --------------------------------------------------------------------------------
+
+
+def test_clean_trims_and_lowercases_strings():
+    df = pd.DataFrame({"email": ["  Ada@Example.com  ", "grace@example.com"]})
+    result, stats = clean(df, {"trim": ["email"], "lowercase": ["email"]})
+    assert list(result["email"]) == ["ada@example.com", "grace@example.com"]
+    assert stats["cells_trimmed"] == 1
+    assert stats["cells_lowercased"] == 1
+
+
+def test_clean_whitespace_only_string_becomes_missing_after_trim():
+    df = pd.DataFrame({"country": ["US", "   "]})
+    result, _ = clean(df, {"trim": ["country"]})
+    assert result["country"].isna().tolist() == [False, True]
+
+
+def test_clean_fills_null_with_default():
+    df = pd.DataFrame({"country": ["US", None]})
+    result, stats = clean(df, {"fill_null": {"country": "UNKNOWN"}})
+    assert list(result["country"]) == ["US", "UNKNOWN"]
+    assert stats["cells_filled"] == 1
+
+
+def test_clean_drops_rows_missing_required_columns():
+    df = pd.DataFrame({"email": ["a@x.com", None, "c@x.com"]})
+    result, stats = clean(df, {"drop_rows_missing": ["email"]})
+    assert len(result) == 2
+    assert stats["rows_dropped"] == 1
+
+
+def test_clean_drops_rows_below_min_present_fraction():
+    df = pd.DataFrame(
+        {
+            "a": [1, None, 3],
+            "b": [1, None, 3],
+            "c": [1, None, None],
+        }
+    )
+    # row 1 has 0/3 columns present (0%), row 2 has 2/3 (67%) - only row 1 fails a 50% threshold
+    result, stats = clean(df, {"min_present_fraction": 0.5})
+    assert len(result) == 2
+    assert stats["rows_dropped"] == 1
+
+
+def test_clean_ignores_columns_not_present_in_the_dataframe():
+    df = pd.DataFrame({"a": [1, 2]})
+    result, stats = clean(
+        df,
+        {
+            "trim": ["missing"],
+            "fill_null": {"missing": "x"},
+            "drop_rows_missing": ["missing"],
+        },
+    )
+    assert len(result) == 2
+    assert stats["rows_dropped"] == 0
+
+
+def test_engine_run_clean_step_repairs_rows_that_would_otherwise_block(customers_csv):
+    """A blocking not_null rule would normally fail the whole run — cleaning the null out first
+    (via fill_null) lets the run succeed instead."""
+    path = Path(customers_csv)
+    with path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["customer_id", "first_name", "email", "country"])
+        writer.writerow(["1", "Ada", "ada@example.com", None])
+        writer.writerow(["2", "Grace", "grace@example.com", "US"])
+
+    loaded = {}
+
+    def loader(rows):
+        loaded["rows"] = rows
+        return {"created": len(rows), "updated": 0}
+
+    result = engine.run(
+        extract_spec={"type": "file", "path": customers_csv},
+        validation_spec={"rules": [{"type": "not_null", "columns": ["country"]}]},
+        transform_spec={"clean": {"fill_null": {"country": "UNKNOWN"}}},
+        loader=loader,
+    )
+
+    assert result.validation.overall_score == 100.0
+    assert result.clean_stats["cells_filled"] == 1
+    assert [row["country"] for row in loaded["rows"]] == ["UNKNOWN", "US"]
 
 
 def test_engine_run_end_to_end(customers_csv):

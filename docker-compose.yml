@@ -72,6 +72,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Free, local S3-compatible object storage for the S3 connector (v0.9) — no AWS account
+  # needed. Console UI at :9091 (default login minioadmin/minioadmin); the connector itself
+  # talks to :9000 via the "endpoint_url" config field.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9091"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -92,3 +112,4 @@ services:
 
 volumes:
   pgdata:
+  miniodata:

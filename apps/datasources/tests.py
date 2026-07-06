@@ -9,6 +9,7 @@ from apps.workspaces.services import create_workspace
 
 from .connectors.postgres_connector import PostgresConnector
 from .connectors.rest_api_connector import RestApiConnector
+from .connectors.s3_connector import S3Connector
 from .models import DataSource
 
 User = get_user_model()
@@ -184,11 +185,49 @@ def test_rest_api_connector_extract_delegates_to_etl_and_wraps_errors(monkeypatc
         RestApiConnector({"url": "https://api.example.com"}).extract()
 
 
+# ---- S3Connector ----------------------------------------------------------------------------
+
+
+def test_s3_connector_test_connection_requires_bucket_and_key():
+    with pytest.raises(ConnectorError):
+        S3Connector({}).test_connection()
+
+
+def test_s3_connector_test_connection_wraps_client_errors(monkeypatch):
+    import boto3
+    from botocore.exceptions import ClientError
+
+    class _FailingClient:
+        def head_object(self, Bucket, Key):
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "not found"}}, "HeadObject"
+            )
+
+    monkeypatch.setattr(boto3, "client", lambda service, **kwargs: _FailingClient())
+
+    with pytest.raises(ConnectorError):
+        S3Connector({"bucket": "b", "key": "missing.csv"}).test_connection()
+
+
+def test_s3_connector_extract_delegates_to_etl_and_wraps_errors(monkeypatch):
+    from apps.etl.exceptions import ExtractError
+
+    monkeypatch.setattr(
+        "apps.datasources.connectors.s3_connector.etl_extract",
+        lambda source_type, config: (_ for _ in ()).throw(
+            ExtractError("no such bucket")
+        ),
+    )
+    with pytest.raises(ConnectorError):
+        S3Connector({"bucket": "b", "key": "k.csv"}).extract()
+
+
 @pytest.mark.django_db
-def test_registry_resolves_postgres_and_rest_api_connector_classes():
+def test_registry_resolves_postgres_rest_api_and_s3_connector_classes():
     from .connectors import get_connector
 
     assert isinstance(
         get_connector("POSTGRES", {"dsn": "x", "query": "y"}), PostgresConnector
     )
     assert isinstance(get_connector("REST_API", {"url": "x"}), RestApiConnector)
+    assert isinstance(get_connector("S3", {"bucket": "b", "key": "k"}), S3Connector)

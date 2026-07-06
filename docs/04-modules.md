@@ -61,25 +61,40 @@ extends `common.HealthView` with platform-wide counts (workspaces/users/pipeline
 at-a-glance ops view. API: `admin/users/`, `admin/config/`, `admin/health/`.
 
 ## datasources
-`DataSource` (name, type FILE/POSTGRES/REST_API, Fernet-encrypted `config`, owner, workspace,
+`DataSource` (name, type FILE/POSTGRES/REST_API/S3, Fernet-encrypted `config`, owner, workspace,
 is_active). A `connectors/` package with a `Connector` ABC and one class per type (`FileConnector`,
-`PostgresConnector`, `RestApiConnector`), plus a registry `get_connector(type, config)`. Connectors
-return a pandas DataFrame. Each connector's `extract()` is a thin wrapper that delegates to
-`apps.etl.extract` (the one place that actually implements reading a file/running a SQL
-query/paginating a REST API) — connectors only add the Django-settings-aware bits (file path
-resolution) and a cheap standalone `test_connection()` probe on top of that shared,
-framework-agnostic logic; this keeps the real extraction logic in exactly one place instead of
-duplicated between the two apps. CRUD API scoped to workspace membership (v0.7: `workspace` is a
-required, serializer-validated field — the client must be a member of the workspace it names); a
-"test connection" action.
+`PostgresConnector`, `RestApiConnector`, `S3Connector`), plus a registry `get_connector(type,
+config)`. Connectors return a pandas DataFrame. Each connector's `extract()` is a thin wrapper that
+delegates to `apps.etl.extract` (the one place that actually implements reading a file/running a
+SQL query/paginating a REST API/reading an S3 object) — connectors only add the
+Django-settings-aware bits (file path resolution) and a cheap standalone `test_connection()` probe
+on top of that shared, framework-agnostic logic; this keeps the real extraction logic in exactly
+one place instead of duplicated between the two apps. `S3Connector` (v0.9) reads a CSV object from
+any S3-compatible bucket — `endpoint_url` targets a self-hosted store (MinIO, free, runs via
+`docker compose up minio` — see `docker-compose.yml`) instead of real AWS, same config shape either
+way, so nothing changes to point a pipeline built against MinIO at real S3 later. CRUD API scoped
+to workspace membership (v0.7: `workspace` is a required, serializer-validated field — the client
+must be a member of the workspace it names); a "test connection" action.
 
 ## etl  (framework-agnostic â€” no Django imports)
-Pure functions: `extract(source_type, config)` (file/postgres/rest_api — postgres via a plain
-`psycopg2` cursor, rest_api via `urllib` with pagination, a configurable rate limit, and retry with
-backoff), `transform(df, spec)`, `load` helpers, and `engine.run(...)` which orchestrates
-extractâ†’incrementalâ†’validateâ†’transformâ†’load, returns metrics + step logs (including the
-validation outcome and the next watermark), and raises on blocking validation failure. Receives a
-`loader` callable so it never touches the ORM.
+Pure functions: `extract(source_type, config)` (file/postgres/rest_api/s3 — postgres via a plain
+`psycopg2` cursor, rest_api via `urllib` with pagination, a configurable rate limit and retry with
+backoff, s3 via `boto3`), `clean(df, spec)` (v0.9, see below), `transform(df, spec)`, `load`
+helpers, and `engine.run(...)` which orchestrates extractâ†’incrementalâ†’cleanâ†’validateâ†’transformâ†’load,
+returns metrics + step logs (including the validation outcome and the next watermark), and raises
+on blocking validation failure. Receives a `loader` callable so it never touches the ORM.
+
+`clean.py` (v0.9) repairs fixable issues *before* validation sees them, so a batch that would
+otherwise trip a blocking rule or silently load garbage can instead succeed on the repaired data:
+trim whitespace (a whitespace-only cell becomes missing, not a stray value), lowercase, fill
+missing values with a default, and drop rows outright if a required column is missing or if fewer
+than a configured fraction of a row's columns are populated. Nested under `transform.clean` in a
+pipeline's config (still executed before validation internally — `engine.run` pulls it out of the
+transform spec early) so the API surface didn't need a new top-level config key. Returns a stats
+dict (`cells_trimmed`, `cells_filled`, `rows_dropped`, ...) folded into the run's `metrics.clean`.
+This is deliberately a *repair* step, not a replacement for validation: the scorecard still scores
+whatever's left after cleaning, so a source that's degrading upstream still shows up in the
+quality trend even though bad rows no longer block the load.
 
 `incremental.py` is the watermark logic: `filter_incremental(df, column, watermark, grace_seconds)`
 keeps only rows newer than the watermark (client-side, so it applies uniformly regardless of
@@ -171,8 +186,22 @@ warehouse-table snapshot after each load) as Parquet, Hive-partitioned by date
 (`data/medallion/<layer>/<dataset>/dt=YYYY-MM-DD/<run_id>.parquet`, using the run's own date so
 re-processing old data partitions correctly instead of always landing in "today"), queried back via
 DuckDB (`read_parquet`) across every partition â€” gold queries only the latest file, since each one
-is a complete snapshot. API: `datasets/`, `schema-versions/`, `columns/` (read-only), plus
-`datasets/<name>/lineage/` (the full graph) and `datasets/<name>/medallion/<layer>/` (DuckDB query).
+is a complete snapshot. API: `datasets/`, `schema-versions/`, `columns/`, `anomalies/` (read-only),
+plus `datasets/<name>/lineage/` (the full graph) and `datasets/<name>/medallion/<layer>/` (DuckDB
+query).
+
+**Statistical anomaly detection (v0.9):** `services.detect_anomalies(dataset, run, df)` flags a
+numeric column's mean as an outlier if it's more than 3 standard deviations from that column's
+running baseline (`ColumnStats`: `count`/`mean`/`m2`, updated via Welford's *parallel* algorithm —
+merging each run's batch statistics into the running aggregate — so this stays O(columns) in
+storage no matter how many runs a dataset has seen, rather than keeping every run's raw values). A
+flag doesn't stop anything (unlike a blocking validation rule) — it's recorded as a
+`ColumnAnomaly` and the baseline is updated regardless, so a *sustained* shift eventually becomes
+the new normal instead of triggering forever. Needs at least a few accumulated samples before it
+flags anything (`ANOMALY_MIN_BASELINE_SAMPLES`) — a brand-new column just establishes its baseline
+silently. This is the same z-score mechanism data-observability tools (Monte Carlo, Bigeye) build
+on, at a tiny, dependency-free scale. Called from `record_ingest` on every successful run, same as
+schema drift detection.
 
 ## monitoring
 `metrics.py` defines the custom Prometheus counters/histogram (`dataflow_pipeline_runs_total` by
@@ -244,15 +273,18 @@ and `WorkspaceContext` (the v0.7 tenant boundary — every workspace-scoped page
 empty state otherwise). Every workspace-scoped list call is filtered by `?workspace=<id>` so
 switching workspaces in the header actually re-scopes every page.
 
-Pages: Data Sources (create + list + a "test connection" action), a pipeline builder (dynamic
-validation-rule editor covering every `apps.etl.validate` rule type, a rename-column editor, target
-and incremental-column pickers) + pipeline detail (run history, run/pause/resume/clone actions, and
-a `setInterval` poll against `GET /pipelines/runs/<id>/` after triggering a run — stopped once the
-run reaches SUCCEEDED/FAILED — satisfying "run status updates" without a websocket), a monitoring
-dashboard (recharts bar chart over `GET /monitoring/dashboard/`), a lineage viewer (a hand-rolled SVG
-DAG renderer over `GET /metadata/datasets/<name>/lineage/` — skipped a graph library since the graph
-is small and fixed-shape: SOURCE→BRONZE→SILVER→GOLD columns), and quality scorecards (a recharts
-trend line over `GET /validation/scorecards/?run__pipeline=<id>`).
+Pages: Data Sources (create + list + a "test connection" action; config form covers FILE, POSTGRES,
+REST_API, and S3 — v0.9), a pipeline builder (a cleansing fieldset for `transform.clean`, v0.9,
+alongside a dynamic validation-rule editor covering every `apps.etl.validate` rule type, a
+rename-column editor, target and incremental-column pickers) + pipeline detail (run history,
+run/pause/resume/clone actions, and a `setInterval` poll against `GET /pipelines/runs/<id>/` after
+triggering a run — stopped once the run reaches SUCCEEDED/FAILED — satisfying "run status updates"
+without a websocket), a monitoring dashboard (a recharts bar chart over `GET
+/monitoring/dashboard/`, plus a data-anomalies table over `GET /metadata/anomalies/`, v0.9), a
+lineage viewer (a hand-rolled SVG DAG renderer over `GET /metadata/datasets/<name>/lineage/` —
+skipped a graph library since the graph is small and fixed-shape: SOURCE→BRONZE→SILVER→GOLD
+columns), and quality scorecards (a recharts trend line over `GET
+/validation/scorecards/?run__pipeline=<id>`).
 
 CORS (`django-cors-headers`, `CORS_ALLOWED_ORIGINS` env var, default `localhost:5173`) is the only
 backend change this milestone required — JWT travels as an `Authorization` header, not a cookie, so

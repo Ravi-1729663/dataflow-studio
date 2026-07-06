@@ -4,11 +4,13 @@ from .base import Connector
 from .file_connector import FileConnector
 from .postgres_connector import PostgresConnector
 from .rest_api_connector import RestApiConnector
+from .s3_connector import S3Connector
 
 _REGISTRY = {
     "FILE": FileConnector,
     "POSTGRES": PostgresConnector,
     "REST_API": RestApiConnector,
+    "S3": S3Connector,
 }
 
 
@@ -27,5 +29,6 @@ __all__ = [
     "FileConnector",
     "PostgresConnector",
     "RestApiConnector",
+    "S3Connector",
     "get_connector",
 ]

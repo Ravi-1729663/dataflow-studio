@@ -11,6 +11,7 @@ class DataSource(BaseModel):
         FILE = "FILE", "File"
         POSTGRES = "POSTGRES", "Postgres"
         REST_API = "REST_API", "REST API"
+        S3 = "S3", "S3 (or compatible)"
 
     name = models.CharField(max_length=200)
     source_type = models.CharField(max_length=16, choices=SourceType.choices)

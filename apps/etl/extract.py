@@ -28,6 +28,8 @@ def extract(source_type: str, config: dict) -> pd.DataFrame:
         return _extract_postgres(config)
     if source_type == "rest_api":
         return _extract_rest_api(config)
+    if source_type == "s3":
+        return _extract_s3(config)
     raise ExtractError(f"Unsupported source_type: {source_type!r}")
 
 
@@ -67,6 +69,45 @@ def _extract_postgres(config: dict) -> pd.DataFrame:
         raise ExtractError(f"postgres query failed: {exc}") from exc
 
     return pd.DataFrame(rows, columns=columns)
+
+
+def _extract_s3(config: dict) -> pd.DataFrame:
+    """Reads a CSV object from an S3-compatible bucket. ``endpoint_url`` lets this target a
+    self-hosted/free S3-compatible store (e.g. MinIO) instead of real AWS — same API, same
+    config shape, so a pipeline built against MinIO in dev needs no code change to point at real
+    S3 later."""
+    bucket = config.get("bucket")
+    key = config.get("key")
+    if not bucket or not key:
+        raise ExtractError("s3 source config requires 'bucket' and 'key'")
+
+    try:
+        import boto3
+        from botocore.exceptions import BotoCoreError, ClientError
+    except ImportError as exc:  # pragma: no cover - boto3 is a project dependency
+        raise ExtractError("boto3 is required for s3 sources") from exc
+
+    client_kwargs = {
+        k: config[k]
+        for k in (
+            "endpoint_url",
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "region_name",
+        )
+        if config.get(k)
+    }
+
+    try:
+        client = boto3.client("s3", **client_kwargs)
+        response = client.get_object(Bucket=bucket, Key=key)
+        return pd.read_csv(response["Body"])
+    except (BotoCoreError, ClientError) as exc:
+        raise ExtractError(f"could not read s3://{bucket}/{key}: {exc}") from exc
+    except pd.errors.EmptyDataError as exc:
+        raise ExtractError(f"object is empty: s3://{bucket}/{key}") from exc
+    except pd.errors.ParserError as exc:
+        raise ExtractError(f"could not parse object: s3://{bucket}/{key}") from exc
 
 
 def _extract_rest_api(config: dict) -> pd.DataFrame:
