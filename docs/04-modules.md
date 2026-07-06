@@ -221,3 +221,35 @@ current one, so `external_id` is deliberately *not* globally unique, only enforc
 Both loaders batch writes into chunked transactions (`DEFAULT_BATCH_SIZE`) rather than one
 transaction per row or one giant transaction for the whole run. `get_dataframe()` (used for the
 metadata app's gold Parquet snapshot) only returns current rows regardless of load strategy.
+
+## frontend  (v0.8, not a Django app — lives at repo root, not under `apps/`)
+A React + TypeScript SPA (Vite) that talks to the same REST API as everything else — no server-side
+rendering, no separate backend-for-frontend. `src/lib/api.ts` is the only place that knows about
+JWT: an axios instance attaches the access token to every request and, on a 401, transparently
+refreshes it (concurrent 401s share one in-flight refresh) before retrying the original request once;
+a refresh failure clears tokens and bounces to `/login`. `src/lib/resources.ts` is thin typed
+wrappers per backend app (mirrors the URL layout under `/api/v1/`); `src/lib/types.ts` mirrors the
+DRF serializers by hand (no codegen — `/api/schema/` is the source of truth if they drift).
+
+Two React contexts carry cross-cutting state: `AuthContext` (current user, login/register/logout)
+and `WorkspaceContext` (the v0.7 tenant boundary — every workspace-scoped page reads/writes through
+`WorkspaceGate`, which prompts to create a workspace if none exists yet, since there's no useful
+empty state otherwise). Every workspace-scoped list call is filtered by `?workspace=<id>` so
+switching workspaces in the header actually re-scopes every page.
+
+Pages: Data Sources (create + list + a "test connection" action), a pipeline builder (dynamic
+validation-rule editor covering every `apps.etl.validate` rule type, a rename-column editor, target
+and incremental-column pickers) + pipeline detail (run history, run/pause/resume/clone actions, and
+a `setInterval` poll against `GET /pipelines/runs/<id>/` after triggering a run — stopped once the
+run reaches SUCCEEDED/FAILED — satisfying "run status updates" without a websocket), a monitoring
+dashboard (recharts bar chart over `GET /monitoring/dashboard/`), a lineage viewer (a hand-rolled SVG
+DAG renderer over `GET /metadata/datasets/<name>/lineage/` — skipped a graph library since the graph
+is small and fixed-shape: SOURCE→BRONZE→SILVER→GOLD columns), and quality scorecards (a recharts
+trend line over `GET /validation/scorecards/?run__pipeline=<id>`).
+
+CORS (`django-cors-headers`, `CORS_ALLOWED_ORIGINS` env var, default `localhost:5173`) is the only
+backend change this milestone required — JWT travels as an `Authorization` header, not a cookie, so
+no `CORS_ALLOW_CREDENTIALS` is needed. Run with `make frontend-install && make frontend-dev`
+alongside `make run`. No automated frontend tests were added for this milestone (out of scope per
+`PROJECT_PLAN.md`'s v0.8 acceptance criteria) — `npm run build` (`tsc -b && vite build`) is the only
+gate, run in place of a test suite.

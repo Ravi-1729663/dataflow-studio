@@ -20,7 +20,7 @@ logger = logging.getLogger("dataflow.pipelines")
 class PipelineViewSet(viewsets.ModelViewSet):
     serializer_class = PipelineSerializer
     permission_classes = [IsEngineerOrAdminOrReadOnly]
-    filterset_fields = ["is_active", "source"]
+    filterset_fields = ["is_active", "source", "workspace"]
 
     def get_queryset(self):
         return Pipeline.objects.filter(

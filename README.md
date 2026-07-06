@@ -58,6 +58,13 @@ make run       # API on http://localhost:8000  (docs at /api/docs/)
 make test
 ```
 
+**React dashboard** (v0.8, talks to the API above — run both at once):
+
+```bash
+make frontend-install
+make frontend-dev   # SPA on http://localhost:5173
+```
+
 **Full stack (Postgres + Redis + Celery + Prometheus + Grafana):**
 
 ```bash
@@ -81,6 +88,9 @@ config/         Django project (settings/, urls, celery, wsgi/asgi)
 apps/
   common/       BaseModel, logging, exceptions, health
   accounts/     User + JWT + RBAC
+  workspaces/   multi-tenant org isolation
+  audit/        sensitive-action audit trail
+  platform_admin/ user/role management, platform config, extended health
   datasources/  DataSource + connectors (file / postgres / rest_api)
   etl/          extract / validate / transform / load / engine  (no Django imports)
   pipelines/    Pipeline + PipelineRun + execute service + celery tasks
@@ -90,6 +100,7 @@ apps/
   monitoring/   metrics + execution dashboard
   notifications/ email / Slack alerts
   warehouse/    served gold tables + query API
+frontend/       React + TypeScript SPA (v0.8) — talks to the REST API
 docs/           requirements, scope, architecture, ADRs
 monitoring/     prometheus + grafana config
 .github/        CI
@@ -101,6 +112,7 @@ monitoring/     prometheus + grafana config
 |---------------|--------------------------------------------------|
 | API           | Django 5, Django REST Framework, drf-spectacular |
 | Auth          | JWT (SimpleJWT), custom RBAC                      |
+| Frontend      | React + TypeScript (Vite), react-router, recharts |
 | Async / cron  | Celery, Redis, django-celery-beat                |
 | Storage       | PostgreSQL (SQLite local), DuckDB + Parquet       |
 | Data          | pandas                                           |

@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "django_filters",
     "django_prometheus",
     "django_celery_beat",
+    "corsheaders",
     # dataflow apps
     "apps.common",
     "apps.accounts",
@@ -49,6 +50,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -190,6 +192,16 @@ if not FERNET_KEY:
     FERNET_KEY = base64.urlsafe_b64encode(
         hashlib.sha256(SECRET_KEY.encode()).digest()
     ).decode()
+
+# ---- CORS (v0.8: the React SPA in frontend/ runs on a different origin/port) ----
+# JWT is sent as an Authorization header, not a cookie, so no CORS_ALLOW_CREDENTIALS is needed.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origin.strip()
+]
 
 # ---- Email ----
 EMAIL_BACKEND = os.environ.get(

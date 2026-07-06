@@ -1,4 +1,4 @@
-.PHONY: install migrate makemigrations seed run worker beat test lint format docker-up docker-down clean
+.PHONY: install migrate makemigrations seed run worker beat test lint format docker-up docker-down clean frontend-install frontend-dev frontend-build frontend-lint
 
 install:            ## Install dev + runtime dependencies
 	pip install -r requirements-dev.txt
@@ -39,3 +39,15 @@ docker-down:        ## Stop the stack
 clean:              ## Remove caches and local db
 	rm -rf .pytest_cache .ruff_cache htmlcov .coverage db.sqlite3
 	find . -type d -name __pycache__ -exec rm -rf {} +
+
+frontend-install:   ## Install the React SPA's dependencies
+	cd frontend && npm install
+
+frontend-dev:       ## Run the React SPA dev server (talks to `make run` on :8000)
+	cd frontend && npm run dev
+
+frontend-build:     ## Type-check and production-build the React SPA
+	cd frontend && npm run build
+
+frontend-lint:      ## Lint the React SPA
+	cd frontend && npm run lint
