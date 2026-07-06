@@ -3,6 +3,11 @@
 # repo in the Render dashboard ("New +" -> "Blueprint") — see docs/05-deployment.md for the full
 # walkthrough, including which secrets to fill in by hand (Render never reads secret values from
 # this file).
+#
+# NOTE: fromDatabase / fromService references cannot live inside a shared envVarGroup — Render's
+# Blueprint parser only allows literal values, generateValue, or sync:false there. Any var that
+# references another resource (the database or Redis) is declared directly on each service below.
+
 databases:
   - name: dataflow-studio-db
     plan: free
@@ -22,24 +27,28 @@ envVarGroups:
         sync: false # generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       - key: USE_POSTGRES
         value: "1"
-      - key: POSTGRES_DB
-        fromDatabase: { name: dataflow-studio-db, property: database }
-      - key: POSTGRES_USER
-        fromDatabase: { name: dataflow-studio-db, property: user }
-      - key: POSTGRES_PASSWORD
-        fromDatabase: { name: dataflow-studio-db, property: password }
-      - key: POSTGRES_HOST
-        fromDatabase: { name: dataflow-studio-db, property: host }
-      - key: POSTGRES_PORT
-        fromDatabase: { name: dataflow-studio-db, property: port }
-      - key: CELERY_BROKER_URL
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-      - key: CELERY_RESULT_BACKEND
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
       - key: CELERY_TASK_ALWAYS_EAGER
         value: "0"
       - key: CORS_ALLOWED_ORIGINS
         sync: false # the deployed frontend's origin, e.g. https://dataflow-studio.onrender.com
+
+# Reusable list of the resource-linked vars every service needs (Postgres + Redis connection info).
+# YAML anchors let us define this once and reuse it on each service without repeating ourselves.
+x-datastore-env: &datastore-env
+  - key: POSTGRES_DB
+    fromDatabase: { name: dataflow-studio-db, property: database }
+  - key: POSTGRES_USER
+    fromDatabase: { name: dataflow-studio-db, property: user }
+  - key: POSTGRES_PASSWORD
+    fromDatabase: { name: dataflow-studio-db, property: password }
+  - key: POSTGRES_HOST
+    fromDatabase: { name: dataflow-studio-db, property: host }
+  - key: POSTGRES_PORT
+    fromDatabase: { name: dataflow-studio-db, property: port }
+  - key: CELERY_BROKER_URL
+    fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
+  - key: CELERY_RESULT_BACKEND
+    fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
 
 services:
   - type: redis
@@ -55,6 +64,7 @@ services:
     healthCheckPath: /api/health/
     envVars:
       - fromGroup: dataflow-studio-shared
+      - *datastore-env
 
   - type: worker
     name: dataflow-studio-worker
@@ -64,6 +74,7 @@ services:
     dockerCommand: celery -A config worker -l info --pool=solo
     envVars:
       - fromGroup: dataflow-studio-shared
+      - *datastore-env
 
   - type: worker
     name: dataflow-studio-beat
@@ -73,3 +84,4 @@ services:
     dockerCommand: celery -A config beat -l info
     envVars:
       - fromGroup: dataflow-studio-shared
+      - *datastore-env
