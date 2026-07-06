@@ -14,6 +14,9 @@ class CustomerSerializer(serializers.ModelSerializer):
             "email",
             "signup_date",
             "country",
+            "valid_from",
+            "valid_to",
+            "is_current",
             "created_at",
             "updated_at",
         )

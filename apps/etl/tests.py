@@ -1,6 +1,9 @@
 """Unit tests for the framework-agnostic etl engine. No Django, no DB."""
 
 import csv
+import json
+import urllib.error
+import urllib.parse
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +12,7 @@ import pytest
 from apps.etl import engine
 from apps.etl.exceptions import ExtractError, TransformError, ValidationFailed
 from apps.etl.extract import extract
+from apps.etl.incremental import compute_watermark, filter_incremental
 from apps.etl.transform import transform
 from apps.etl.validate import validate
 
@@ -37,7 +41,284 @@ def test_extract_file_missing_path_raises():
 
 def test_extract_unsupported_type_raises():
     with pytest.raises(ExtractError):
-        extract("rest_api", {})
+        extract("carrier_pigeon", {})
+
+
+# ---- postgres ---------------------------------------------------------------------------------
+
+
+class _FakeCursor:
+    def __init__(self, rows, columns, error=None):
+        self._rows = rows
+        self.description = [(c,) for c in columns]
+        self._error = error
+
+    def execute(self, query, params=None):
+        if self._error:
+            raise self._error
+
+    def fetchall(self):
+        return self._rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class _FakeConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def test_extract_postgres_runs_query_and_returns_dataframe(monkeypatch):
+    import psycopg2
+
+    cursor = _FakeCursor(rows=[(1, "Ada"), (2, "Grace")], columns=["id", "name"])
+    monkeypatch.setattr(psycopg2, "connect", lambda dsn: _FakeConnection(cursor))
+
+    df = extract(
+        "postgres", {"dsn": "postgresql://x", "query": "SELECT * FROM customers"}
+    )
+
+    assert list(df.columns) == ["id", "name"]
+    assert len(df) == 2
+
+
+def test_extract_postgres_missing_config_raises():
+    with pytest.raises(ExtractError):
+        extract("postgres", {"dsn": "postgresql://x"})
+
+
+def test_extract_postgres_query_error_raises_extract_error(monkeypatch):
+    import psycopg2
+
+    cursor = _FakeCursor(rows=[], columns=[], error=psycopg2.Error("connection reset"))
+    monkeypatch.setattr(psycopg2, "connect", lambda dsn: _FakeConnection(cursor))
+
+    with pytest.raises(ExtractError):
+        extract("postgres", {"dsn": "postgresql://x", "query": "SELECT 1"})
+
+
+# ---- rest_api -----------------------------------------------------------------------------------
+
+
+class _FakeHttpResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _page_param(request, name="page"):
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+    return int(query[name][0])
+
+
+def test_extract_rest_api_paginates_until_an_empty_page(monkeypatch):
+    pages = {1: [{"id": 1}, {"id": 2}], 2: [{"id": 3}], 3: []}
+    seen_pages = []
+
+    def fake_urlopen(request, timeout=10):
+        page = _page_param(request)
+        seen_pages.append(page)
+        return _FakeHttpResponse(json.dumps(pages[page]).encode())
+
+    monkeypatch.setattr("apps.etl.extract.urllib.request.urlopen", fake_urlopen)
+
+    df = extract("rest_api", {"url": "https://api.example.com/items"})
+
+    assert len(df) == 3
+    assert seen_pages == [1, 2, 3]
+
+
+def test_extract_rest_api_stops_at_max_pages(monkeypatch):
+    def fake_urlopen(request, timeout=10):
+        return _FakeHttpResponse(json.dumps([{"id": 1}]).encode())  # never runs dry
+
+    monkeypatch.setattr("apps.etl.extract.urllib.request.urlopen", fake_urlopen)
+
+    df = extract(
+        "rest_api",
+        {"url": "https://api.example.com/items", "pagination": {"max_pages": 3}},
+    )
+
+    assert len(df) == 3
+
+
+def test_extract_rest_api_retries_transient_errors_then_succeeds(monkeypatch):
+    attempts = {"n": 0}
+
+    def flaky_urlopen(request, timeout=10):
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise urllib.error.URLError("temporary")
+        return _FakeHttpResponse(json.dumps([]).encode())
+
+    monkeypatch.setattr("apps.etl.extract.urllib.request.urlopen", flaky_urlopen)
+    monkeypatch.setattr("apps.etl.extract.time.sleep", lambda seconds: None)
+
+    df = extract(
+        "rest_api",
+        {"url": "https://api.example.com/items", "retries": {"max_attempts": 3}},
+    )
+
+    assert attempts["n"] == 2
+    assert df.empty
+
+
+def test_extract_rest_api_raises_after_exhausting_retries(monkeypatch):
+    def always_fails(request, timeout=10):
+        raise urllib.error.URLError("down")
+
+    monkeypatch.setattr("apps.etl.extract.urllib.request.urlopen", always_fails)
+    monkeypatch.setattr("apps.etl.extract.time.sleep", lambda seconds: None)
+
+    with pytest.raises(ExtractError):
+        extract(
+            "rest_api",
+            {"url": "https://api.example.com/items", "retries": {"max_attempts": 2}},
+        )
+
+
+def test_extract_rest_api_respects_rate_limit(monkeypatch):
+    pages = {1: [{"id": 1}], 2: []}
+    sleeps = []
+
+    def fake_urlopen(request, timeout=10):
+        return _FakeHttpResponse(json.dumps(pages[_page_param(request)]).encode())
+
+    monkeypatch.setattr("apps.etl.extract.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "apps.etl.extract.time.sleep", lambda seconds: sleeps.append(seconds)
+    )
+    monkeypatch.setattr("apps.etl.extract.time.monotonic", lambda: 0.0)
+
+    extract(
+        "rest_api",
+        {
+            "url": "https://api.example.com/items",
+            "rate_limit": {"requests_per_second": 10},
+        },
+    )
+
+    assert sleeps == [pytest.approx(0.1)]
+
+
+def test_extract_rest_api_unexpected_results_shape_raises():
+    def fake_urlopen(request, timeout=10):
+        return _FakeHttpResponse(json.dumps({"not": "a list"}).encode())
+
+    import apps.etl.extract as extract_module
+
+    original = extract_module.urllib.request.urlopen
+    extract_module.urllib.request.urlopen = fake_urlopen
+    try:
+        with pytest.raises(ExtractError):
+            extract("rest_api", {"url": "https://api.example.com/items"})
+    finally:
+        extract_module.urllib.request.urlopen = original
+
+
+# ---- incremental --------------------------------------------------------------------------------
+
+
+def test_filter_incremental_keeps_only_rows_after_the_watermark():
+    df = pd.DataFrame(
+        {"updated_at": ["2024-01-01", "2024-01-05", "2024-01-10"], "v": [1, 2, 3]}
+    )
+    result = filter_incremental(df, "updated_at", "2024-01-04")
+    assert list(result["v"]) == [2, 3]
+
+
+def test_filter_incremental_no_watermark_returns_everything():
+    df = pd.DataFrame({"updated_at": ["2024-01-01"], "v": [1]})
+    assert len(filter_incremental(df, "updated_at", None)) == 1
+
+
+def test_filter_incremental_missing_column_returns_everything():
+    df = pd.DataFrame({"v": [1, 2]})
+    assert len(filter_incremental(df, "updated_at", "2024-01-01")) == 2
+
+
+def test_filter_incremental_grace_period_tolerates_late_arrivals():
+    df = pd.DataFrame({"updated_at": ["2024-01-04T23:59:00"], "v": [1]})
+    watermark = "2024-01-05T00:00:00"
+
+    assert len(filter_incremental(df, "updated_at", watermark)) == 0
+    assert len(filter_incremental(df, "updated_at", watermark, grace_seconds=3600)) == 1
+
+
+def test_filter_incremental_non_date_column_uses_string_comparison():
+    df = pd.DataFrame({"seq": ["a1", "a2", "a3"], "v": [1, 2, 3]})
+    result = filter_incremental(df, "seq", "a1")
+    assert list(result["v"]) == [2, 3]
+
+
+def test_compute_watermark_returns_the_max_value():
+    df = pd.DataFrame({"updated_at": ["2024-01-01", "2024-01-10", "2024-01-05"]})
+    assert compute_watermark(df, "updated_at") == "2024-01-10"
+
+
+def test_compute_watermark_empty_dataframe_returns_none():
+    df = pd.DataFrame({"updated_at": []})
+    assert compute_watermark(df, "updated_at") is None
+
+
+def test_engine_run_incremental_only_loads_new_rows_and_advances_watermark(tmp_path):
+    path = tmp_path / "customers.csv"
+    path.write_text(
+        "customer_id,email,updated_at\n"
+        "1,ada@example.com,2024-01-01\n"
+        "2,grace@example.com,2024-01-02\n"
+    )
+    loaded = []
+
+    result = engine.run(
+        extract_spec={"type": "file", "path": str(path)},
+        validation_spec={},
+        transform_spec={},
+        loader=lambda rows: loaded.append(rows) or {"created": len(rows), "updated": 0},
+        incremental_spec={"column": "updated_at", "watermark": "2024-01-01"},
+    )
+
+    assert (
+        result.rows_extracted == 2
+    )  # raw pull from the source, before incremental filtering
+    assert (
+        result.rows_loaded == 1
+    )  # only the row after the watermark actually got loaded
+    assert result.new_watermark == "2024-01-02"
+    assert len(loaded[0]) == 1
+    assert loaded[0][0]["email"] == "grace@example.com"
+
+
+def test_engine_run_without_incremental_spec_loads_everything(customers_csv):
+    result = engine.run(
+        extract_spec={"type": "file", "path": customers_csv},
+        validation_spec={},
+        transform_spec={},
+        loader=lambda rows: {"created": len(rows), "updated": 0},
+    )
+    assert result.rows_extracted == 2
+    assert result.new_watermark is None
 
 
 def test_validate_passes_when_clean_and_scores_100():

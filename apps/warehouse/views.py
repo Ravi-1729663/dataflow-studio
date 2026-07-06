@@ -9,4 +9,4 @@ class CustomerViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    filterset_fields = ["country"]
+    filterset_fields = ["country", "external_id", "is_current"]

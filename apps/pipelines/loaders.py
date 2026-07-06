@@ -1,10 +1,11 @@
 """Maps a Pipeline's ``target`` to a warehouse loader callable. The only bridge from etl to warehouse."""
 
 from apps.common.exceptions import PipelineExecutionError
-from apps.warehouse.services import upsert_customers
+from apps.warehouse.services import upsert_customers, upsert_customers_scd2
 
 _TARGETS = {
     "customers": upsert_customers,
+    "customers_scd2": upsert_customers_scd2,
 }
 
 

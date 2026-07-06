@@ -10,7 +10,7 @@ from apps.etl import engine
 from apps.etl.exceptions import EtlError
 from apps.warehouse.models import Customer
 
-from .models import DeadLetterRecord, Pipeline, PipelineRun
+from .models import DeadLetterRecord, Pipeline, PipelineRun, PipelineWatermark
 from .services import execute_pipeline
 from .tasks import run_pipeline_task
 
@@ -214,3 +214,117 @@ def test_failed_run_traceback_pinpoints_the_failing_step(pipeline):
     assert run.status == PipelineRun.Status.FAILED
     assert "apps/etl/validate.py" in run.traceback.replace("\\", "/")
     assert "ValidationFailed" in run.traceback
+
+
+# ---- incremental / watermark ------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_incremental_pipeline_second_run_only_loads_the_delta(tmp_path, settings):
+    settings.BASE_DIR = tmp_path
+    csv_path = tmp_path / "customers.csv"
+    csv_path.write_text(
+        "customer_id,email,updated_at\n"
+        "1,ada@example.com,2024-01-01\n"
+        "2,grace@example.com,2024-01-02\n"
+    )
+    user = User.objects.create_user(
+        username="incremental-engineer", password="pw12345678"
+    )
+    source = DataSource.objects.create(
+        name="Incremental CSV",
+        source_type=DataSource.SourceType.FILE,
+        config={"path": "customers.csv"},
+        owner=user,
+    )
+    pipeline_obj = Pipeline.objects.create(
+        name="Incremental Ingest",
+        source=source,
+        owner=user,
+        config={
+            "validation": {
+                "rules": [{"type": "required_columns", "columns": ["email"]}]
+            },
+            "transform": {},
+            "target": "customers",
+            "incremental": {"column": "updated_at"},
+        },
+    )
+
+    first_run = execute_pipeline(pipeline_obj)
+    assert first_run.status == PipelineRun.Status.SUCCEEDED
+    assert first_run.metrics["rows_extracted"] == 2
+    assert first_run.metrics["rows_loaded"] == 2
+    assert Customer.objects.count() == 2
+    watermark = PipelineWatermark.objects.get(pipeline=pipeline_obj)
+    assert watermark.value == "2024-01-02"
+
+    # The source gains a new row (a real-world "delta") since the last run.
+    csv_path.write_text(
+        "customer_id,email,updated_at\n"
+        "1,ada@example.com,2024-01-01\n"
+        "2,grace@example.com,2024-01-02\n"
+        "3,kay@example.com,2024-01-03\n"
+    )
+
+    second_run = execute_pipeline(pipeline_obj)
+    assert second_run.status == PipelineRun.Status.SUCCEEDED
+    assert second_run.metrics["rows_extracted"] == 3  # raw pull from the source
+    assert second_run.metrics["rows_loaded"] == 1  # only the new row
+    assert second_run.metrics["created"] == 1
+    assert Customer.objects.count() == 3
+    watermark.refresh_from_db()
+    assert watermark.value == "2024-01-03"
+
+
+@pytest.mark.django_db
+def test_pipeline_without_incremental_config_never_creates_a_watermark(pipeline):
+    execute_pipeline(pipeline)
+    assert not PipelineWatermark.objects.filter(pipeline=pipeline).exists()
+
+
+# ---- SCD Type 2 ---------------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_scd2_target_pipeline_keeps_history_across_runs(tmp_path, settings):
+    settings.BASE_DIR = tmp_path
+    csv_path = tmp_path / "customers.csv"
+    csv_path.write_text("customer_id,email,country\n1,ada@example.com,UK\n")
+    user = User.objects.create_user(username="scd2-engineer", password="pw12345678")
+    source = DataSource.objects.create(
+        name="SCD2 CSV",
+        source_type=DataSource.SourceType.FILE,
+        config={"path": "customers.csv"},
+        owner=user,
+    )
+    pipeline_obj = Pipeline.objects.create(
+        name="SCD2 Ingest",
+        source=source,
+        owner=user,
+        config={
+            "validation": {
+                "rules": [{"type": "required_columns", "columns": ["email"]}]
+            },
+            "transform": {},
+            "target": "customers_scd2",
+        },
+    )
+
+    first_run = execute_pipeline(pipeline_obj)
+    assert first_run.status == PipelineRun.Status.SUCCEEDED
+    assert Customer.objects.filter(external_id="1").count() == 1
+
+    csv_path.write_text("customer_id,email,country\n1,ada@example.com,US\n")
+    second_run = execute_pipeline(pipeline_obj)
+
+    assert second_run.status == PipelineRun.Status.SUCCEEDED
+    versions = list(Customer.objects.filter(external_id="1").order_by("valid_from"))
+    assert len(versions) == 2
+    old, new = versions
+    assert old.is_current is False
+    assert old.valid_to is not None
+    assert old.country == "UK"
+    assert new.is_current is True
+    assert new.valid_to is None
+    assert new.country == "US"

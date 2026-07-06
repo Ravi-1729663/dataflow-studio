@@ -19,9 +19,12 @@ from .models import ColumnMetadata, Dataset, LineageEdge, LineageNode, SchemaVer
 logger = logging.getLogger("dataflow.metadata")
 
 # Maps a Dataset name (== a pipeline's config["target"]) to the callable that snapshots its
-# current gold-layer state. Extend this as more warehouse targets land.
+# current gold-layer state. Extend this as more warehouse targets land. "customers" and
+# "customers_scd2" are different targets/loaders (Type 1 vs Type 2) over the same underlying
+# table, so they share the same current-rows snapshot.
 _GOLD_SNAPSHOT_SOURCES = {
     "customers": _get_customers_dataframe,
+    "customers_scd2": _get_customers_dataframe,
 }
 
 
@@ -194,10 +197,15 @@ def record_ingest(
     record_schema(dataset, run, raw_df, rename_map)
     sync_lineage(pipeline, dataset, rename_map)
 
-    medallion.write_layer("BRONZE", dataset.name, raw_df, str(run.id))
-    medallion.write_layer("SILVER", dataset.name, transformed_df, str(run.id))
+    partition_date = (run.started_at or run.created_at).date()
+    medallion.write_layer("BRONZE", dataset.name, raw_df, str(run.id), partition_date)
+    medallion.write_layer(
+        "SILVER", dataset.name, transformed_df, str(run.id), partition_date
+    )
     gold_df = _gold_snapshot(dataset)
     if gold_df is not None:
-        medallion.write_layer("GOLD", dataset.name, gold_df, str(run.id))
+        medallion.write_layer(
+            "GOLD", dataset.name, gold_df, str(run.id), partition_date
+        )
 
     return dataset

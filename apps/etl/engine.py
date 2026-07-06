@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import extract as extract_step
+from . import incremental as incremental_step
 from . import load as load_step
 from . import transform as transform_step
 from . import validate as validate_step
@@ -28,6 +29,9 @@ class EngineResult:
     # (bronze/silver) layers. repr=False keeps them out of log lines.
     raw_df: object = field(default=None, repr=False)
     transformed_df: object = field(default=None, repr=False)
+    # The watermark to persist for the next incremental run, or None if incremental wasn't
+    # configured (or the batch was empty, in which case the caller should keep the old one).
+    new_watermark: str | None = None
 
 
 def run(
@@ -35,10 +39,16 @@ def run(
     validation_spec: dict,
     transform_spec: dict,
     loader: Callable[[list[dict]], dict],
+    incremental_spec: dict | None = None,
 ) -> EngineResult:
     """Run one pipeline pass. Raises an ``EtlError`` subclass on any step failure — a
     ``ValidationFailed`` still carries its ``ValidationOutcome`` so the caller can persist a
-    quality scorecard even for a blocked run."""
+    quality scorecard even for a blocked run.
+
+    ``incremental_spec``, if given as ``{"column": ..., "watermark": ..., "grace_seconds": ...}``,
+    filters the extracted batch down to new/changed rows before validation even sees it — so a
+    run's bronze layer and quality scorecard reflect only what's new this time.
+    """
     started = time.monotonic()
     step_logs: list[str] = []
 
@@ -47,6 +57,20 @@ def run(
     step_logs.append(
         f"extracted {rows_extracted} row(s) from {extract_spec.get('type')}"
     )
+
+    new_watermark = None
+    if incremental_spec and incremental_spec.get("column"):
+        column = incremental_spec["column"]
+        watermark = incremental_spec.get("watermark")
+        before = len(raw_df)
+        raw_df = incremental_step.filter_incremental(
+            raw_df, column, watermark, incremental_spec.get("grace_seconds", 0)
+        )
+        new_watermark = incremental_step.compute_watermark(raw_df, column) or watermark
+        step_logs.append(
+            f"incremental filter on {column!r}: {len(raw_df)}/{before} new/changed row(s) "
+            f"(watermark {watermark!r} -> {new_watermark!r})"
+        )
 
     outcome = validate_step.validate(raw_df, validation_spec)
     step_logs.append(f"validation passed: overall_score={outcome.overall_score}")
@@ -68,6 +92,7 @@ def run(
         duration_seconds=time.monotonic() - started,
         raw_df=raw_df,
         transformed_df=transformed_df,
+        new_watermark=new_watermark,
     )
 
 

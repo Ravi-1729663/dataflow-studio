@@ -4,6 +4,8 @@ import pandas as pd
 from django.conf import settings
 
 from apps.common.exceptions import ConnectorError
+from apps.etl.exceptions import ExtractError
+from apps.etl.extract import extract as etl_extract
 
 from .base import Connector
 
@@ -24,12 +26,11 @@ class FileConnector(Connector):
             raise ConnectorError(f"file not found: {path}")
 
     def extract(self) -> pd.DataFrame:
-        path = self._resolve_path()
+        """Delegates to apps.etl.extract, which owns the actual (framework-agnostic) read
+        logic — this class only adds the Django-settings-aware path resolution above."""
         try:
-            return pd.read_csv(path)
-        except (
-            FileNotFoundError,
-            pd.errors.EmptyDataError,
-            pd.errors.ParserError,
-        ) as exc:
-            raise ConnectorError(f"could not read file {path}: {exc}") from exc
+            return etl_extract(
+                "file", {**self.config, "path": str(self._resolve_path())}
+            )
+        except ExtractError as exc:
+            raise ConnectorError(str(exc)) from exc

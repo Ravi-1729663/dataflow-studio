@@ -70,3 +70,17 @@ class DeadLetterRecord(BaseModel):
 
     def __str__(self) -> str:
         return f"DLQ: {self.run.pipeline.name} run {self.run.id}"
+
+
+class PipelineWatermark(BaseModel):
+    """The incremental cursor for a pipeline's source (e.g. the max value of ``updated_at`` seen
+    so far), so the next run only extracts new/changed rows. Only exists for pipelines with
+    ``config["incremental"]`` set; updated after each successful run."""
+
+    pipeline = models.OneToOneField(
+        Pipeline, on_delete=models.CASCADE, related_name="watermark"
+    )
+    value = models.CharField(max_length=200, blank=True)
+
+    def __str__(self) -> str:
+        return f"watermark for {self.pipeline.name}: {self.value!r}"

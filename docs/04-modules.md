@@ -20,15 +20,31 @@ register, me, token, token/refresh. Later: password reset, workspace membership 
 
 ## datasources
 `DataSource` (name, type FILE/POSTGRES/REST_API, JSON `config`, owner, is_active). A `connectors/`
-package with a `Connector` ABC and one class per type, plus a registry `get_connector(type, config)`.
-Connectors return a pandas DataFrame. Credentials are Fernet-encrypted (v0.7). CRUD API scoped to the
-owner; a "test connection" action.
+package with a `Connector` ABC and one class per type (`FileConnector`, `PostgresConnector`,
+`RestApiConnector`), plus a registry `get_connector(type, config)`. Connectors return a pandas
+DataFrame. Each connector's `extract()` is a thin wrapper that delegates to `apps.etl.extract` (the
+one place that actually implements reading a file/running a SQL query/paginating a REST API) —
+connectors only add the Django-settings-aware bits (file path resolution) and a cheap standalone
+`test_connection()` probe on top of that shared, framework-agnostic logic; this keeps the real
+extraction logic in exactly one place instead of duplicated between the two apps. Credentials are
+Fernet-encrypted (v0.7). CRUD API scoped to the owner; a "test connection" action.
 
 ## etl  (framework-agnostic â€” no Django imports)
-Pure functions: `extract(source_type, config)`, `transform(df, spec)`, `load` helpers, and
-`engine.run(...)` which orchestrates extractâ†’validateâ†’transformâ†’load, returns metrics + step logs
-(including the validation outcome), and raises on blocking validation failure. Receives a `loader`
-callable so it never touches the ORM.
+Pure functions: `extract(source_type, config)` (file/postgres/rest_api — postgres via a plain
+`psycopg2` cursor, rest_api via `urllib` with pagination, a configurable rate limit, and retry with
+backoff), `transform(df, spec)`, `load` helpers, and `engine.run(...)` which orchestrates
+extractâ†’incrementalâ†’validateâ†’transformâ†’load, returns metrics + step logs (including the
+validation outcome and the next watermark), and raises on blocking validation failure. Receives a
+`loader` callable so it never touches the ORM.
+
+`incremental.py` is the watermark logic: `filter_incremental(df, column, watermark, grace_seconds)`
+keeps only rows newer than the watermark (client-side, so it applies uniformly regardless of
+source type or whether a connector pushed the filter into its query), and `compute_watermark`
+returns the max value seen for next time. `grace_seconds` is the late-arriving-data strategy — a
+row within that window *before* the watermark is still included, tolerating an out-of-order
+arrival; idempotent loads make the resulting overlap harmless. `engine.run()`'s `rows_extracted`
+is the raw source pull; `rows_loaded` is what survived incremental filtering — the gap between the
+two is the whole point of watermark tracking.
 
 `validate(df, spec)` is the rule library behind data-quality scorecards: a pluggable registry of
 checks (`required_columns`, `not_null`, `unique`, `no_duplicate_rows`, `column_type`, `range`,
@@ -50,9 +66,13 @@ retry_count) plus `DeadLetterRecord` (one-to-one with a run that exhausted every
 loop rather than Celery's `self.retry()`, because that API only re-queues through the broker and is
 a no-op under `CELERY_TASK_ALWAYS_EAGER=1` (this project's zero-setup local-dev default). After
 `MAX_RETRIES` (3) failed attempts the run lands in FAILED with its error + full traceback and a
-`DeadLetterRecord` is filed. `loaders.py` maps engine output to warehouse models idempotently, so
-re-running (manually or via retry) never double-loads. API: pipeline CRUD + `run` (async, returns
-immediately with the new run) + `clone` + `pause`/`resume` actions + read-only run history.
+`DeadLetterRecord` is filed. `loaders.py` maps a pipeline's `target` to a warehouse loader
+(`customers`: Type-1 upsert; `customers_scd2`: Type 2 history), idempotently, so re-running
+(manually or via retry) never double-loads. `PipelineWatermark` (one-to-one with a pipeline)
+persists the incremental cursor between runs, read/written by `_build_incremental_spec` and
+`execute_attempt` respectively — only exists for pipelines with `config["incremental"]` set. API:
+pipeline CRUD + `run` (async, returns immediately with the new run) + `clone` + `pause`/`resume`
+actions + read-only run history.
 
 ## scheduler
 Bridges `Pipeline.schedule` (a 5-field cron string) to django-celery-beat's
@@ -87,9 +107,11 @@ rename, not an unrelated add/drop pair. `ColumnMetadata` is the current column c
 SOURCEâ†’BRONZEâ†’SILVERâ†’GOLD graph â€” bronze/silver/gold nodes are shared per dataset, so a graph can
 show multiple sources feeding one warehouse table; each edge keeps its own column mapping per
 pipeline for provenance. `medallion.py` writes bronze/silver (per-run batches) and gold (a full
-warehouse-table snapshot after each load) as Parquet under `data/medallion/<layer>/<dataset>/`,
-queried back via DuckDB (`read_parquet`) â€” gold queries only the latest file, since each one is a
-complete snapshot. API: `datasets/`, `schema-versions/`, `columns/` (read-only), plus
+warehouse-table snapshot after each load) as Parquet, Hive-partitioned by date
+(`data/medallion/<layer>/<dataset>/dt=YYYY-MM-DD/<run_id>.parquet`, using the run's own date so
+re-processing old data partitions correctly instead of always landing in "today"), queried back via
+DuckDB (`read_parquet`) across every partition â€” gold queries only the latest file, since each one
+is a complete snapshot. API: `datasets/`, `schema-versions/`, `columns/` (read-only), plus
 `datasets/<name>/lineage/` (the full graph) and `datasets/<name>/medallion/<layer>/` (DuckDB query).
 
 ## monitoring
@@ -128,3 +150,14 @@ preference/` (the caller's own), `GET logs/` (read-only, owner-scoped).
 ## warehouse
 The served "gold" layer: target tables (starting with a demo `Customer`) plus a read-only, filtered,
 paginated query API. This is what analysts/dashboards read.
+
+`Customer` supports two load strategies over the same table (`pipelines.loaders` picks one via a
+pipeline's `target`): a plain Type-1 upsert (`services.upsert_customers`, target `"customers"`)
+always overwrites in place, one row per `external_id`; Slowly Changing Dimension Type 2
+(`services.upsert_customers_scd2`, target `"customers_scd2"`) keeps every version — a changed
+tracked attribute closes out the current row (`valid_to`/`is_current=False`) and inserts a new
+current one, so `external_id` is deliberately *not* globally unique, only enforced unique among
+`is_current=True` rows (a partial `UniqueConstraint`). An identical reload is a no-op either way.
+Both loaders batch writes into chunked transactions (`DEFAULT_BATCH_SIZE`) rather than one
+transaction per row or one giant transaction for the whole run. `get_dataframe()` (used for the
+metadata app's gold Parquet snapshot) only returns current rows regardless of load strategy.

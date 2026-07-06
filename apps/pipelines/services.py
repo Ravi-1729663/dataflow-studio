@@ -19,7 +19,7 @@ from apps.notifications.services import notify
 from apps.validation.services import persist_scorecard
 
 from .loaders import get_loader
-from .models import DeadLetterRecord, Pipeline, PipelineRun
+from .models import DeadLetterRecord, Pipeline, PipelineRun, PipelineWatermark
 
 logger = logging.getLogger("dataflow.pipelines")
 
@@ -34,6 +34,27 @@ def _build_extract_spec(pipeline: Pipeline) -> dict:
         if not path.is_absolute():
             spec["path"] = str(Path(settings.BASE_DIR) / path)
     return spec
+
+
+def _build_incremental_spec(pipeline: Pipeline) -> dict | None:
+    """``pipeline.config["incremental"]`` opts a pipeline into watermark tracking:
+    ``{"column": "updated_at", "initial_value": "...", "grace_seconds": 0}``. The current
+    watermark is read from PipelineWatermark (or the configured initial value on the very first
+    run) and handed to the engine; ``execute_attempt`` persists whatever the engine computes back
+    once the run succeeds."""
+    config = pipeline.config.get("incremental")
+    if not config or not config.get("column"):
+        return None
+    watermark = (
+        PipelineWatermark.objects.filter(pipeline=pipeline)
+        .values_list("value", flat=True)
+        .first()
+    )
+    return {
+        "column": config["column"],
+        "watermark": watermark or config.get("initial_value"),
+        "grace_seconds": config.get("grace_seconds", 0),
+    }
 
 
 def start_run(pipeline: Pipeline) -> PipelineRun:
@@ -78,6 +99,7 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
                     validation_spec=pipeline.config.get("validation", {}),
                     transform_spec=pipeline.config.get("transform", {}),
                     loader=loader,
+                    incremental_spec=_build_incremental_spec(pipeline),
                 )
             except ValidationFailed as exc:
                 span.record_exception(exc)
@@ -128,6 +150,10 @@ def execute_attempt(run: PipelineRun) -> PipelineRun:
 
             if result.validation is not None:
                 persist_scorecard(run, result.validation)
+            if result.new_watermark is not None:
+                PipelineWatermark.objects.update_or_create(
+                    pipeline=pipeline, defaults={"value": result.new_watermark}
+                )
             record_ingest(pipeline, run, result.raw_df, result.transformed_df)
             metrics.record_run_succeeded(result.duration_seconds, result.rows_loaded)
             notify(NotificationLog.Event.RUN_SUCCEEDED, run)

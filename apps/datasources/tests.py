@@ -1,7 +1,13 @@
+import urllib.error
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from apps.common.exceptions import ConnectorError
+
+from .connectors.postgres_connector import PostgresConnector
+from .connectors.rest_api_connector import RestApiConnector
 from .models import DataSource
 
 User = get_user_model()
@@ -71,3 +77,74 @@ def test_test_connection_action_reports_missing_file(auth_client):
     response = client.post(f"/api/datasources/{data_source.id}/test-connection/")
     assert response.status_code == 400
     assert response.data["ok"] is False
+
+
+# ---- PostgresConnector --------------------------------------------------------------------------
+
+
+def test_postgres_connector_test_connection_requires_dsn():
+    with pytest.raises(ConnectorError):
+        PostgresConnector({}).test_connection()
+
+
+def test_postgres_connector_test_connection_wraps_connection_errors(monkeypatch):
+    import psycopg2
+
+    def fail_connect(dsn):
+        raise psycopg2.Error("no route to host")
+
+    monkeypatch.setattr(psycopg2, "connect", fail_connect)
+
+    with pytest.raises(ConnectorError):
+        PostgresConnector({"dsn": "postgresql://bad"}).test_connection()
+
+
+def test_postgres_connector_extract_delegates_to_etl_and_wraps_errors(monkeypatch):
+    from apps.etl.exceptions import ExtractError
+
+    monkeypatch.setattr(
+        "apps.datasources.connectors.postgres_connector.etl_extract",
+        lambda source_type, config: (_ for _ in ()).throw(ExtractError("bad query")),
+    )
+    with pytest.raises(ConnectorError):
+        PostgresConnector({"dsn": "postgresql://x", "query": "SELECT 1"}).extract()
+
+
+# ---- RestApiConnector ----------------------------------------------------------------------------
+
+
+def test_rest_api_connector_test_connection_requires_url():
+    with pytest.raises(ConnectorError):
+        RestApiConnector({}).test_connection()
+
+
+def test_rest_api_connector_test_connection_wraps_unreachable_url(monkeypatch):
+    monkeypatch.setattr(
+        "apps.datasources.connectors.rest_api_connector.urllib.request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib.error.URLError("down")
+        ),
+    )
+    with pytest.raises(ConnectorError):
+        RestApiConnector({"url": "https://api.example.com"}).test_connection()
+
+
+def test_rest_api_connector_extract_delegates_to_etl_and_wraps_errors(monkeypatch):
+    from apps.etl.exceptions import ExtractError
+
+    monkeypatch.setattr(
+        "apps.datasources.connectors.rest_api_connector.etl_extract",
+        lambda source_type, config: (_ for _ in ()).throw(ExtractError("timed out")),
+    )
+    with pytest.raises(ConnectorError):
+        RestApiConnector({"url": "https://api.example.com"}).extract()
+
+
+@pytest.mark.django_db
+def test_registry_resolves_postgres_and_rest_api_connector_classes():
+    from .connectors import get_connector
+
+    assert isinstance(
+        get_connector("POSTGRES", {"dsn": "x", "query": "y"}), PostgresConnector
+    )
+    assert isinstance(get_connector("REST_API", {"url": "x"}), RestApiConnector)
