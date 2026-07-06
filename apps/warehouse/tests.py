@@ -23,7 +23,7 @@ def test_upsert_customers_is_idempotent():
 @pytest.mark.django_db
 def test_customers_endpoint_requires_jwt():
     client = APIClient()
-    response = client.get("/api/warehouse/customers/")
+    response = client.get("/api/v1/warehouse/customers/")
     assert response.status_code == 401
 
 
@@ -34,9 +34,39 @@ def test_customers_endpoint_returns_data_with_jwt():
 
     client = APIClient()
     client.force_authenticate(user=user)
-    response = client.get("/api/warehouse/customers/")
+    response = client.get("/api/v1/warehouse/customers/")
     assert response.status_code == 200
     assert response.data["count"] == 1
+
+
+@pytest.mark.django_db
+def test_viewer_sees_masked_email():
+    viewer = User.objects.create_user(
+        username="viewer", password="pw12345678", role=User.Role.VIEWER
+    )
+    Customer.objects.create(external_id="1", first_name="Ada", email="ada@example.com")
+
+    client = APIClient()
+    client.force_authenticate(user=viewer)
+    response = client.get("/api/v1/warehouse/customers/")
+
+    assert response.status_code == 200
+    assert response.data["results"][0]["email"] == "a***@example.com"
+
+
+@pytest.mark.django_db
+def test_engineer_sees_unmasked_email():
+    engineer = User.objects.create_user(
+        username="engineer", password="pw12345678", role=User.Role.ENGINEER
+    )
+    Customer.objects.create(external_id="1", first_name="Ada", email="ada@example.com")
+
+    client = APIClient()
+    client.force_authenticate(user=engineer)
+    response = client.get("/api/v1/warehouse/customers/")
+
+    assert response.status_code == 200
+    assert response.data["results"][0]["email"] == "ada@example.com"
 
 
 # ---- SCD Type 2 -----------------------------------------------------------------------------

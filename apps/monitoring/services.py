@@ -8,7 +8,7 @@ from apps.pipelines.models import PipelineRun
 
 
 def get_dashboard(owner: User) -> dict:
-    runs = PipelineRun.objects.filter(pipeline__owner=owner)
+    runs = PipelineRun.objects.filter(pipeline__workspace__memberships__user=owner)
     total = runs.count()
     succeeded_runs = runs.filter(status=PipelineRun.Status.SUCCEEDED)
     succeeded = succeeded_runs.count()

@@ -24,7 +24,7 @@ class QueueView(APIView):
     def get(self, request):
         runs = (
             PipelineRun.objects.filter(
-                pipeline__owner=request.user,
+                pipeline__workspace__memberships__user=request.user,
                 status__in=[
                     PipelineRun.Status.PENDING,
                     PipelineRun.Status.RUNNING,
@@ -43,7 +43,9 @@ class RetryFailedRunView(APIView):
     permission_classes = [IsEngineerOrAdminOrReadOnly]
 
     def post(self, request, run_id):
-        run = get_object_or_404(PipelineRun, pk=run_id, pipeline__owner=request.user)
+        run = get_object_or_404(
+            PipelineRun, pk=run_id, pipeline__workspace__memberships__user=request.user
+        )
         if run.status != PipelineRun.Status.FAILED:
             return Response({"error": "only FAILED runs can be retried"}, status=400)
 
@@ -69,5 +71,5 @@ class DeadLetterListView(generics.ListAPIView):
 
     def get_queryset(self):
         return DeadLetterRecord.objects.filter(
-            run__pipeline__owner=self.request.user
+            run__pipeline__workspace__memberships__user=self.request.user
         ).select_related("run", "run__pipeline")

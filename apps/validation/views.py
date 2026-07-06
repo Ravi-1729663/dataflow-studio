@@ -12,7 +12,9 @@ class QualityScorecardViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return (
-            QualityScorecard.objects.filter(run__pipeline__owner=self.request.user)
+            QualityScorecard.objects.filter(
+                run__pipeline__workspace__memberships__user=self.request.user
+            )
             .select_related("run", "run__pipeline")
             .order_by("created_at")
         )

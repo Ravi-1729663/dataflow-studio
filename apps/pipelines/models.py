@@ -3,6 +3,7 @@ from django.db import models
 
 from apps.common.models import BaseModel
 from apps.datasources.models import DataSource
+from apps.workspaces.models import Workspace
 
 
 class Pipeline(BaseModel):
@@ -17,10 +18,24 @@ class Pipeline(BaseModel):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="pipelines"
     )
+    # Always the same workspace as `source` (see save() below) — a pipeline can't reach across
+    # workspaces to read someone else's source. Not client-settable; derived, not requested.
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="pipelines",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if self.source_id and not self.workspace_id:
+            self.workspace_id = self.source.workspace_id
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.name

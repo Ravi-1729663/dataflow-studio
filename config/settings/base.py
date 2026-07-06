@@ -33,6 +33,9 @@ INSTALLED_APPS = [
     # dataflow apps
     "apps.common",
     "apps.accounts",
+    "apps.workspaces",
+    "apps.audit",
+    "apps.platform_admin",
     "apps.datasources",
     "apps.pipelines",
     "apps.scheduler",
@@ -129,6 +132,18 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 25,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "apps.common.exceptions.custom_exception_handler",
+    # ---- Rate limiting (v0.7) ----
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "user": os.environ.get("THROTTLE_RATE_USER", "300/min"),
+        "anon": os.environ.get("THROTTLE_RATE_ANON", "20/min"),
+        # A tighter scope for brute-forceable endpoints (register/login) — opted into per-view
+        # via `throttle_scope`, layered on top of (not instead of) the blanket user/anon rates.
+        "auth": os.environ.get("THROTTLE_RATE_AUTH", "10/min"),
+    },
 }
 
 SIMPLE_JWT = {
@@ -139,7 +154,7 @@ SIMPLE_JWT = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "DataFlow Studio API",
     "DESCRIPTION": "Register data sources, run validated ETL/ELT pipelines, and query the warehouse.",
-    "VERSION": "0.1.0",
+    "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
@@ -163,6 +178,18 @@ PIPELINE_RETRY_BACKOFF_BASE_SECONDS = int(
 
 # ---- Security ----
 FERNET_KEY = os.environ.get("FERNET_KEY", "")
+if not FERNET_KEY:
+    # Zero-setup dev fallback: derive a deterministic key from SECRET_KEY so DataSource
+    # credentials still encrypt/decrypt correctly across restarts without a manual `python -c
+    # "from cryptography.fernet import Fernet; ..."` step. Production MUST set FERNET_KEY
+    # explicitly (see .env.example) — this fallback is unsuitable for real secrets, since a
+    # leaked SECRET_KEY would also leak the derived Fernet key.
+    import base64
+    import hashlib
+
+    FERNET_KEY = base64.urlsafe_b64encode(
+        hashlib.sha256(SECRET_KEY.encode()).digest()
+    ).decode()
 
 # ---- Email ----
 EMAIL_BACKEND = os.environ.get(

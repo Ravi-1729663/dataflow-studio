@@ -9,6 +9,7 @@ from apps.datasources.models import DataSource
 from apps.etl import engine
 from apps.etl.exceptions import EtlError
 from apps.warehouse.models import Customer
+from apps.workspaces.services import create_workspace
 
 from .models import DeadLetterRecord, Pipeline, PipelineRun, PipelineWatermark
 from .services import execute_pipeline
@@ -32,11 +33,13 @@ def customers_csv(tmp_path, settings):
 @pytest.fixture
 def pipeline(db, customers_csv):
     user = User.objects.create_user(username="engineer", password="pw12345678")
+    workspace = create_workspace(user, "Engineer Workspace")
     source = DataSource.objects.create(
         name="Demo CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": customers_csv},
         owner=user,
+        workspace=workspace,
     )
     return Pipeline.objects.create(
         name="Demo Ingest",
@@ -89,13 +92,42 @@ def test_run_pipeline_via_api(pipeline):
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
 
-    response = client.post(f"/api/pipelines/{pipeline.id}/run/")
+    response = client.post(f"/api/v1/pipelines/{pipeline.id}/run/")
     assert response.status_code == 202
     assert response.data["status"] == "SUCCEEDED"
 
-    response = client.get("/api/pipelines/runs/")
+    response = client.get("/api/v1/pipelines/runs/")
     assert response.status_code == 200
     assert response.data["count"] == 1
+
+
+@pytest.mark.django_db
+def test_run_with_idempotency_key_is_not_triggered_twice(pipeline):
+    client = APIClient()
+    client.force_authenticate(user=pipeline.owner)
+
+    first = client.post(
+        f"/api/v1/pipelines/{pipeline.id}/run/", HTTP_IDEMPOTENCY_KEY="retry-abc123"
+    )
+    second = client.post(
+        f"/api/v1/pipelines/{pipeline.id}/run/", HTTP_IDEMPOTENCY_KEY="retry-abc123"
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.data["id"] == second.data["id"]  # replayed, not a second run
+    assert PipelineRun.objects.filter(pipeline=pipeline).count() == 1
+
+
+@pytest.mark.django_db
+def test_run_without_idempotency_key_triggers_every_time(pipeline):
+    client = APIClient()
+    client.force_authenticate(user=pipeline.owner)
+
+    client.post(f"/api/v1/pipelines/{pipeline.id}/run/")
+    client.post(f"/api/v1/pipelines/{pipeline.id}/run/")
+
+    assert PipelineRun.objects.filter(pipeline=pipeline).count() == 2
 
 
 @pytest.mark.django_db
@@ -154,13 +186,13 @@ def test_pause_and_resume_toggle_is_active(pipeline):
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
 
-    response = client.post(f"/api/pipelines/{pipeline.id}/pause/")
+    response = client.post(f"/api/v1/pipelines/{pipeline.id}/pause/")
     assert response.status_code == 200
     assert response.data["is_active"] is False
     pipeline.refresh_from_db()
     assert pipeline.is_active is False
 
-    response = client.post(f"/api/pipelines/{pipeline.id}/resume/")
+    response = client.post(f"/api/v1/pipelines/{pipeline.id}/resume/")
     assert response.status_code == 200
     assert response.data["is_active"] is True
 
@@ -170,7 +202,7 @@ def test_clone_creates_inactive_copy(pipeline):
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
 
-    response = client.post(f"/api/pipelines/{pipeline.id}/clone/")
+    response = client.post(f"/api/v1/pipelines/{pipeline.id}/clone/")
     assert response.status_code == 201
     assert response.data["is_active"] is False
     assert response.data["id"] != str(pipeline.id)
@@ -231,11 +263,13 @@ def test_incremental_pipeline_second_run_only_loads_the_delta(tmp_path, settings
     user = User.objects.create_user(
         username="incremental-engineer", password="pw12345678"
     )
+    workspace = create_workspace(user, "Incremental Workspace")
     source = DataSource.objects.create(
         name="Incremental CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": "customers.csv"},
         owner=user,
+        workspace=workspace,
     )
     pipeline_obj = Pipeline.objects.create(
         name="Incremental Ingest",
@@ -292,11 +326,13 @@ def test_scd2_target_pipeline_keeps_history_across_runs(tmp_path, settings):
     csv_path = tmp_path / "customers.csv"
     csv_path.write_text("customer_id,email,country\n1,ada@example.com,UK\n")
     user = User.objects.create_user(username="scd2-engineer", password="pw12345678")
+    workspace = create_workspace(user, "SCD2 Workspace")
     source = DataSource.objects.create(
         name="SCD2 CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": "customers.csv"},
         owner=user,
+        workspace=workspace,
     )
     pipeline_obj = Pipeline.objects.create(
         name="SCD2 Ingest",

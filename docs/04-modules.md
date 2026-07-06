@@ -3,6 +3,13 @@
 Each module is a Django app under `apps/`. Layering: `models` â†’ `services` â†’ `serializers`/`views`.
 Acceptance criteria per version are in `PROJECT_PLAN.md`; this file is the per-module contract.
 
+**Cross-cutting (v0.7):** every business endpoint lives under `/api/v1/` now (`config/urls.py`) —
+`/api/health/`, `/api/schema/`, `/api/docs/`, `/metrics`, and `/admin/` (Django admin) stay
+unversioned, since they're infrastructure surfaces rather than versioned business API. DRF
+throttling is on globally (`UserRateThrottle`/`AnonRateThrottle`, rates via `THROTTLE_RATE_USER`/
+`THROTTLE_RATE_ANON`), plus a tighter `auth` scope (`THROTTLE_RATE_AUTH`, default 10/min) applied to
+register/login specifically.
+
 ## common
 Shared building blocks. `BaseModel` (UUID pk + created/updated timestamps), domain exceptions
 (`ConnectorError`, `PipelineExecutionError`, validation errors), a DRF exception handler producing
@@ -12,22 +19,59 @@ into every log record automatically — so code that has never heard of a "run i
 `apps.warehouse`) still gets tagged correctly during a run's execution, without passing `extra=`
 everywhere by hand. `/api/health/` checks the database and, when async execution is actually in
 play, the Celery broker (skipped under `CELERY_TASK_ALWAYS_EAGER=1`, since no broker exists there).
+`fields.EncryptedJSONField` (v0.7) is a `TextField` that transparently Fernet-encrypts/decrypts a
+JSON-serializable value — the column holds opaque ciphertext, never plaintext; `FERNET_KEY` comes
+from the environment, with a dev-only fallback derived from `SECRET_KEY` (see `config/settings/base.py`).
+`idempotency.idempotent(action_name)` (v0.7) is a decorator for side-effecting viewset actions: a
+client-supplied `Idempotency-Key` header makes a retried request replay the original response
+instead of re-triggering the action, backed by the `IdempotencyKey` model.
 
 ## accounts
 Custom `User` with a `role` (ADMIN/ENGINEER/ANALYST/VIEWER). JWT auth via SimpleJWT (token +
-refresh). RBAC permission classes (`IsAdmin`, `IsEngineerOrAdmin`, read-only-for-viewers). Endpoints:
-register, me, token, token/refresh. Later: password reset, workspace membership (v0.7).
+refresh) — `LoginView` wraps SimpleJWT's `TokenObtainPairView` to add an audit-log entry and the
+tighter `auth` throttle scope (10/min by default), since login/register are classic brute-force
+targets. RBAC permission classes (`IsAdmin`, `IsEngineerOrAdmin`, read-only-for-viewers). Endpoints:
+register, me, token, token/refresh.
+
+## workspaces  (v0.7)
+The tenant boundary. `Workspace` + `WorkspaceMembership` (through table with a `role` of
+OWNER/MEMBER). Every workspace-owned resource (`DataSource`, and `Pipeline` via its source) carries
+a `workspace` FK, and every other app's `get_queryset()` filters through
+`workspace__memberships__user=request.user` — this is the actual isolation enforcement, not just a
+convention. `services.create_workspace` also makes the creator its first OWNER; only an OWNER can
+add/remove members. API: workspace CRUD + `members/` (list/add) + `members/<user_id>/` (remove).
+Deliberately *not* extended to `metadata`/`warehouse` — see those sections below.
+
+## audit  (v0.7)
+`AuditLog` (actor, workspace, action, target, metadata JSON) — an immutable trail of sensitive
+actions (register, login, workspace/datasource/pipeline create-update-delete-run, admin user/role
+changes). `actor` and `workspace` are `SET_NULL` on delete, not `CASCADE`: an audit trail must
+outlive the thing it describes, so deleting a workspace nulls the FK but the row (and its `target`
+name) survives. `services.record(actor, action, workspace=None, target="", metadata=None)` is the
+only write path, called from every app that needs to audit something — never written to directly.
+Read API (`GET /api/v1/audit/logs/`) is platform-admin-only, since the trail is a global,
+cross-workspace surface.
+
+## platform_admin  (v0.7)
+Admin-only surface, gated by the existing `IsAdmin` permission (not a new role). `UserAdminViewSet`
+lists/patches users (role, `is_active`) — no create (registration is self-service) or delete
+(deactivate instead, to preserve FK history on everything the user owns/authored).
+`PlatformConfig` is a runtime-editable key/value store for platform-wide settings. `SystemHealthView`
+extends `common.HealthView` with platform-wide counts (workspaces/users/pipelines/runs) for an
+at-a-glance ops view. API: `admin/users/`, `admin/config/`, `admin/health/`.
 
 ## datasources
-`DataSource` (name, type FILE/POSTGRES/REST_API, JSON `config`, owner, is_active). A `connectors/`
-package with a `Connector` ABC and one class per type (`FileConnector`, `PostgresConnector`,
-`RestApiConnector`), plus a registry `get_connector(type, config)`. Connectors return a pandas
-DataFrame. Each connector's `extract()` is a thin wrapper that delegates to `apps.etl.extract` (the
-one place that actually implements reading a file/running a SQL query/paginating a REST API) —
-connectors only add the Django-settings-aware bits (file path resolution) and a cheap standalone
-`test_connection()` probe on top of that shared, framework-agnostic logic; this keeps the real
-extraction logic in exactly one place instead of duplicated between the two apps. Credentials are
-Fernet-encrypted (v0.7). CRUD API scoped to the owner; a "test connection" action.
+`DataSource` (name, type FILE/POSTGRES/REST_API, Fernet-encrypted `config`, owner, workspace,
+is_active). A `connectors/` package with a `Connector` ABC and one class per type (`FileConnector`,
+`PostgresConnector`, `RestApiConnector`), plus a registry `get_connector(type, config)`. Connectors
+return a pandas DataFrame. Each connector's `extract()` is a thin wrapper that delegates to
+`apps.etl.extract` (the one place that actually implements reading a file/running a SQL
+query/paginating a REST API) — connectors only add the Django-settings-aware bits (file path
+resolution) and a cheap standalone `test_connection()` probe on top of that shared,
+framework-agnostic logic; this keeps the real extraction logic in exactly one place instead of
+duplicated between the two apps. CRUD API scoped to workspace membership (v0.7: `workspace` is a
+required, serializer-validated field — the client must be a member of the workspace it names); a
+"test connection" action.
 
 ## etl  (framework-agnostic â€” no Django imports)
 Pure functions: `extract(source_type, config)` (file/postgres/rest_api — postgres via a plain
@@ -56,23 +100,28 @@ violation raises `ValidationFailed`, which still carries the full `ValidationOut
 can be persisted even for a failed run.
 
 ## pipelines
-`Pipeline` (source FK, JSON config = validation/transform/target specs, schedule, is_active) and
-`PipelineRun` (status incl. RETRYING, started/finished, metrics JSON, logs, error, traceback,
-retry_count) plus `DeadLetterRecord` (one-to-one with a run that exhausted every retry).
-`services.start_run`/`execute_attempt`/`mark_retrying`/`mark_failed` are the building blocks;
-`execute_pipeline` composes them for a single synchronous attempt (used by `seed_demo` and tests).
-`tasks.run_pipeline_task` is the Celery entrypoint: a plain retry loop with exponential backoff
-(2s/4s/8s, capped at 30s, base configurable via `PIPELINE_RETRY_BACKOFF_BASE_SECONDS`) — a manual
-loop rather than Celery's `self.retry()`, because that API only re-queues through the broker and is
-a no-op under `CELERY_TASK_ALWAYS_EAGER=1` (this project's zero-setup local-dev default). After
-`MAX_RETRIES` (3) failed attempts the run lands in FAILED with its error + full traceback and a
-`DeadLetterRecord` is filed. `loaders.py` maps a pipeline's `target` to a warehouse loader
-(`customers`: Type-1 upsert; `customers_scd2`: Type 2 history), idempotently, so re-running
-(manually or via retry) never double-loads. `PipelineWatermark` (one-to-one with a pipeline)
-persists the incremental cursor between runs, read/written by `_build_incremental_spec` and
-`execute_attempt` respectively — only exists for pipelines with `config["incremental"]` set. API:
-pipeline CRUD + `run` (async, returns immediately with the new run) + `clone` + `pause`/`resume`
-actions + read-only run history.
+`Pipeline` (source FK, JSON config = validation/transform/target specs, schedule, is_active,
+`workspace` — v0.7: auto-derived from `source.workspace` in `save()`, never client-settable, so a
+pipeline can't be pointed at another workspace's source) and `PipelineRun` (status incl. RETRYING,
+started/finished, metrics JSON, logs, error, traceback, retry_count) plus `DeadLetterRecord`
+(one-to-one with a run that exhausted every retry). `services.start_run`/`execute_attempt`/
+`mark_retrying`/`mark_failed` are the building blocks; `execute_pipeline` composes them for a single
+synchronous attempt (used by `seed_demo` and tests). `tasks.run_pipeline_task` is the Celery
+entrypoint: a plain retry loop with exponential backoff (2s/4s/8s, capped at 30s, base configurable
+via `PIPELINE_RETRY_BACKOFF_BASE_SECONDS`) — a manual loop rather than Celery's `self.retry()`,
+because that API only re-queues through the broker and is a no-op under
+`CELERY_TASK_ALWAYS_EAGER=1` (this project's zero-setup local-dev default). After `MAX_RETRIES` (3)
+failed attempts the run lands in FAILED with its error + full traceback and a `DeadLetterRecord` is
+filed. `loaders.py` maps a pipeline's `target` to a warehouse loader (`customers`: Type-1 upsert;
+`customers_scd2`: Type 2 history), idempotently, so re-running (manually or via retry) never
+double-loads. `PipelineWatermark` (one-to-one with a pipeline) persists the incremental cursor
+between runs, read/written by `_build_incremental_spec` and `execute_attempt` respectively — only
+exists for pipelines with `config["incremental"]` set. API: pipeline CRUD (queryset scoped to
+workspace membership, v0.7) + `run` (async, returns immediately with the new run; supports an
+`Idempotency-Key` header via `apps.common.idempotency`, v0.7) + `clone` + `pause`/`resume` actions +
+read-only run history. `PipelineSerializer` scopes the `source` field's own queryset to the
+requester's workspaces (v0.7) — without this, DRF's default `PrimaryKeyRelatedField` queryset would
+let a client reference another workspace's source by UUID even though they can't list it.
 
 ## scheduler
 Bridges `Pipeline.schedule` (a 5-field cron string) to django-celery-beat's
@@ -80,9 +129,10 @@ Bridges `Pipeline.schedule` (a 5-field cron string) to django-celery-beat's
 `Pipeline`'s `post_save` (in `signals.py`) keeps the beat entry in sync on every save from any call
 site (API, admin, `seed_demo`): create/edit the schedule, pause/resume (toggles `enabled`), or clear
 the schedule (deletes the `PeriodicTask`). This is a one-directional dependency — `pipelines` has no
-knowledge scheduler exists. API: `GET queue/` (in-flight PENDING/RUNNING/RETRYING runs), `GET
-dead-letter/` (exhausted runs), `POST runs/<id>/retry/` (re-enqueues a FAILED run's pipeline as a
-brand-new run — safe because loads are idempotent).
+knowledge scheduler exists. API (queryset/lookups scoped to workspace membership, v0.7): `GET
+queue/` (in-flight PENDING/RUNNING/RETRYING runs), `GET dead-letter/` (exhausted runs), `POST
+runs/<id>/retry/` (re-enqueues a FAILED run's pipeline as a brand-new run — safe because loads are
+idempotent).
 
 ## validation
 The rule library and scoring math live in `apps.etl.validate` (framework-agnostic, kept out of
@@ -90,14 +140,17 @@ this app so it stays fast to unit test with no DB). This app's job is just to pe
 `QualityScorecard` (one-to-one with a `PipelineRun`: completeness/consistency/accuracy/overall_score,
 `passed`, and the raw per-check `checks` JSON for drill-down) and `services.persist_scorecard(run,
 outcome)`, called from `pipelines.services.execute_attempt` on both success and a blocking
-`ValidationFailed`. Read-only API: `GET scorecards/?run__pipeline=<id>`, ordered oldest-first for
-charting, with a computed `score_delta` against the previous scorecard for the same pipeline —
-this is the "trend". A blocking-severity rule stops the load entirely (no scorecard-less runs);
-warning-severity rules still lower the score but let the run succeed.
+`ValidationFailed`. Read-only API (scoped to workspace membership, v0.7): `GET
+scorecards/?run__pipeline=<id>`, ordered oldest-first for charting, with a computed `score_delta`
+against the previous scorecard for the same pipeline — this is the "trend". A blocking-severity
+rule stops the load entirely (no scorecard-less runs); warning-severity rules still lower the score
+but let the run succeed.
 
 ## metadata
 Populated by `pipelines.services.execute_attempt` on every successful run (a run a blocking
-validation rule stopped is never cataloged). `Dataset` is the registry entry for a warehouse
+validation rule stopped is never cataloged). **Deliberately not workspace-scoped (v0.7):** the
+catalog describes the shared warehouse/gold layer, which itself isn't workspace-partitioned — see
+`warehouse` below. `Dataset` is the registry entry for a warehouse
 target (e.g. "customers") â€” shared across every pipeline that feeds it, just like the shared
 warehouse table it describes isn't owner-scoped. `SchemaVersion` snapshots the raw/bronze schema
 per run and flags drift against the previous version; a column that both disappeared and
@@ -126,7 +179,8 @@ worker runs its own tiny Prometheus HTTP server (`config/celery.py`'s `worker_in
 holds together because the worker runs `--pool=solo` (see `docker-compose.yml`) — Celery's default
 prefork pool forks child processes per task, each with its own registry the parent's HTTP server
 can't see. `services.get_dashboard(owner)` computes the execution dashboard (success rate, failed
-jobs, avg duration) from `PipelineRun` directly — duration is read out of the `metrics` JSONField in
+jobs, avg duration) from `PipelineRun` filtered by the caller's workspace memberships (v0.7) —
+duration is read out of the `metrics` JSONField in
 Python rather than an ORM aggregate, since JSON-key aggregation isn't equally portable across
 SQLite and PostgreSQL. `tracing.py` sets up an OpenTelemetry `TracerProvider` with a console
 exporter; `inject_context`/`extract_context` carry a run's trace context from the API's `run`
@@ -145,11 +199,17 @@ run)` renders one of three templates (`templates/notifications/run_{failed,succe
 and dispatches through whichever channels the pipeline owner has enabled, always recording a
 `NotificationLog` — a channel exception is caught and logged, never allowed to break the run itself.
 Called from `pipelines.services` on every success, retry, and terminal failure. API: `GET/PATCH
-preference/` (the caller's own), `GET logs/` (read-only, owner-scoped).
+preference/` (the caller's own — deliberately kept user-scoped rather than workspace-scoped even
+after v0.7 introduced workspaces, since alerting preferences are personal), `GET logs/` (read-only,
+scoped to workspace membership via the log's run→pipeline chain, v0.7).
 
 ## warehouse
 The served "gold" layer: target tables (starting with a demo `Customer`) plus a read-only, filtered,
-paginated query API. This is what analysts/dashboards read.
+paginated query API. This is what analysts/dashboards read. **Deliberately not workspace-scoped
+(v0.7):** the gold layer is an org-wide shared surface by design, consistent with `metadata` above —
+only the write side (`pipelines`/`datasources`) is tenant-isolated. `CustomerSerializer.email` masks
+the address (`a***@example.com`) for anyone who isn't ADMIN/ENGINEER (v0.7 PII masking); analysts and
+viewers querying the served layer never see the raw address.
 
 `Customer` supports two load strategies over the same table (`pipelines.loaders` picks one via a
 pipeline's `target`): a plain Type-1 upsert (`services.upsert_customers`, target `"customers"`)

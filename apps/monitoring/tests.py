@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 from apps.datasources.models import DataSource
 from apps.pipelines.models import Pipeline, PipelineRun
 from apps.pipelines.services import execute_pipeline
+from apps.workspaces.services import create_workspace
 
 User = get_user_model()
 
@@ -19,11 +20,13 @@ def user(db):
 def pipeline(user, tmp_path, settings):
     settings.BASE_DIR = tmp_path
     (tmp_path / "customers.csv").write_text("customer_id,email\n1,a@x.com\n2,b@x.com\n")
+    workspace = create_workspace(user, "Engineer Workspace")
     source = DataSource.objects.create(
         name="CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": "customers.csv"},
         owner=user,
+        workspace=workspace,
     )
     return Pipeline.objects.create(
         name="Ingest",
@@ -42,7 +45,7 @@ def test_dashboard_api_reports_aggregate_stats(pipeline, user):
 
     client = APIClient()
     client.force_authenticate(user=user)
-    response = client.get("/api/monitoring/dashboard/")
+    response = client.get("/api/v1/monitoring/dashboard/")
 
     assert response.status_code == 200
     data = response.data
@@ -62,7 +65,7 @@ def test_dashboard_scoped_to_owner(pipeline, user):
 
     client = APIClient()
     client.force_authenticate(user=other)
-    response = client.get("/api/monitoring/dashboard/")
+    response = client.get("/api/v1/monitoring/dashboard/")
 
     assert response.status_code == 200
     assert response.data["total_runs"] == 0

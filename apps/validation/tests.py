@@ -6,6 +6,8 @@ from apps.datasources.models import DataSource
 from apps.pipelines.models import Pipeline, PipelineRun
 from apps.pipelines.services import execute_pipeline
 from apps.warehouse.models import Customer
+from apps.workspaces.models import Workspace
+from apps.workspaces.services import create_workspace
 
 from .models import QualityScorecard
 
@@ -29,11 +31,15 @@ def user(db):
 
 
 def _make_pipeline(user, path: str, rules: list) -> Pipeline:
+    workspace = Workspace.objects.filter(memberships__user=user).first()
+    if workspace is None:
+        workspace = create_workspace(user, f"{user.username}'s Workspace")
     source = DataSource.objects.create(
         name="CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": path},
         owner=user,
+        workspace=workspace,
     )
     return Pipeline.objects.create(
         name="Ingest",
@@ -127,7 +133,7 @@ def test_scorecard_history_and_trend_queryable_via_api(csv_factory, user):
     client = APIClient()
     client.force_authenticate(user=user)
     response = client.get(
-        "/api/validation/scorecards/", {"run__pipeline": str(pipeline.id)}
+        "/api/v1/validation/scorecards/", {"run__pipeline": str(pipeline.id)}
     )
 
     assert response.status_code == 200
@@ -151,7 +157,7 @@ def test_scorecards_scoped_to_owner(csv_factory, user):
 
     client = APIClient()
     client.force_authenticate(user=user)
-    response = client.get("/api/validation/scorecards/")
+    response = client.get("/api/v1/validation/scorecards/")
 
     assert response.status_code == 200
     assert response.data["count"] == 1

@@ -5,6 +5,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.accounts.permissions import IsEngineerOrAdminOrReadOnly
+from apps.audit.services import record as audit_record
+from apps.common.idempotency import idempotent
 from apps.monitoring.tracing import inject_context
 
 from . import services
@@ -21,13 +23,22 @@ class PipelineViewSet(viewsets.ModelViewSet):
     filterset_fields = ["is_active", "source"]
 
     def get_queryset(self):
-        return Pipeline.objects.filter(owner=self.request.user)
+        return Pipeline.objects.filter(
+            workspace__memberships__user=self.request.user
+        ).distinct()
 
     def perform_create(self, serializer):
         pipeline = serializer.save(owner=self.request.user)
         logger.info("pipeline created", extra={"pipeline_id": pipeline.id})
+        audit_record(
+            self.request.user,
+            "pipeline.created",
+            workspace=pipeline.workspace,
+            target=pipeline.name,
+        )
 
     @action(detail=True, methods=["post"])
+    @idempotent("pipeline.run")
     def run(self, request, pk=None):
         """Enqueue the pipeline for async execution. Returns immediately with the new run's id —
         does not wait for the Celery task to finish (except in eager/local-dev mode, where it
@@ -40,6 +51,12 @@ class PipelineViewSet(viewsets.ModelViewSet):
             trace_context=inject_context(),
         )
         run.refresh_from_db()
+        audit_record(
+            request.user,
+            "pipeline.run",
+            workspace=pipeline.workspace,
+            target=pipeline.name,
+        )
         return Response(PipelineRunSerializer(run).data, status=202)
 
     @action(detail=True, methods=["post"])
@@ -57,6 +74,12 @@ class PipelineViewSet(viewsets.ModelViewSet):
             "pipeline cloned",
             extra={"source_pipeline_id": pipeline.id, "clone_id": clone.id},
         )
+        audit_record(
+            request.user,
+            "pipeline.cloned",
+            workspace=clone.workspace,
+            target=clone.name,
+        )
         return Response(PipelineSerializer(clone).data, status=201)
 
     @action(detail=True, methods=["post"])
@@ -64,6 +87,12 @@ class PipelineViewSet(viewsets.ModelViewSet):
         pipeline = self.get_object()
         pipeline.is_active = False
         pipeline.save(update_fields=["is_active", "updated_at"])
+        audit_record(
+            request.user,
+            "pipeline.paused",
+            workspace=pipeline.workspace,
+            target=pipeline.name,
+        )
         return Response(PipelineSerializer(pipeline).data)
 
     @action(detail=True, methods=["post"])
@@ -71,6 +100,12 @@ class PipelineViewSet(viewsets.ModelViewSet):
         pipeline = self.get_object()
         pipeline.is_active = True
         pipeline.save(update_fields=["is_active", "updated_at"])
+        audit_record(
+            request.user,
+            "pipeline.resumed",
+            workspace=pipeline.workspace,
+            target=pipeline.name,
+        )
         return Response(PipelineSerializer(pipeline).data)
 
 
@@ -79,4 +114,6 @@ class PipelineRunViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ["status", "pipeline"]
 
     def get_queryset(self):
-        return PipelineRun.objects.filter(pipeline__owner=self.request.user)
+        return PipelineRun.objects.filter(
+            pipeline__workspace__memberships__user=self.request.user
+        ).distinct()

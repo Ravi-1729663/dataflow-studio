@@ -6,12 +6,14 @@ from django.core.management.base import BaseCommand
 from apps.datasources.models import DataSource
 from apps.pipelines.models import Pipeline, PipelineRun
 from apps.pipelines.services import execute_pipeline
+from apps.workspaces import services as workspace_services
+from apps.workspaces.models import Workspace
 
 User = get_user_model()
 
 
 class Command(BaseCommand):
-    help = "Seed a demo user + datasource + pipeline and run it end-to-end."
+    help = "Seed a demo user + workspace + datasource + pipeline and run it end-to-end."
 
     def handle(self, *args, **options):
         user, created = User.objects.get_or_create(
@@ -25,12 +27,18 @@ class Command(BaseCommand):
             self.style.SUCCESS(f"user: {user.username} (created={created})")
         )
 
+        workspace = Workspace.objects.filter(memberships__user=user).first()
+        if workspace is None:
+            workspace = workspace_services.create_workspace(user, "Demo Workspace")
+        self.stdout.write(self.style.SUCCESS(f"workspace: {workspace.name}"))
+
         source, _ = DataSource.objects.get_or_create(
             name="Demo Customers CSV",
             owner=user,
             defaults={
                 "source_type": DataSource.SourceType.FILE,
                 "config": {"path": "sample_data/customers.csv"},
+                "workspace": workspace,
             },
         )
         self.stdout.write(self.style.SUCCESS(f"datasource: {source.name}"))

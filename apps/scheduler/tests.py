@@ -8,6 +8,7 @@ from apps.etl.exceptions import EtlError
 from apps.pipelines.models import Pipeline, PipelineRun
 from apps.pipelines.services import execute_pipeline
 from apps.pipelines.tasks import run_pipeline_task
+from apps.workspaces.services import create_workspace
 
 User = get_user_model()
 
@@ -31,11 +32,13 @@ def customers_csv(tmp_path, settings):
 @pytest.fixture
 def pipeline(db, customers_csv):
     user = User.objects.create_user(username="engineer", password="pw12345678")
+    workspace = create_workspace(user, "Engineer Workspace")
     source = DataSource.objects.create(
         name="Demo CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": customers_csv},
         owner=user,
+        workspace=workspace,
     )
     return Pipeline.objects.create(
         name="Demo Ingest",
@@ -74,11 +77,11 @@ def test_pause_disables_periodic_task_resume_reenables_it(pipeline):
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
 
-    client.post(f"/api/pipelines/{pipeline.id}/pause/")
+    client.post(f"/api/v1/pipelines/{pipeline.id}/pause/")
     task = PeriodicTask.objects.get(name=_periodic_task_name(pipeline))
     assert task.enabled is False
 
-    client.post(f"/api/pipelines/{pipeline.id}/resume/")
+    client.post(f"/api/v1/pipelines/{pipeline.id}/resume/")
     task.refresh_from_db()
     assert task.enabled is True
 
@@ -100,7 +103,7 @@ def test_invalid_cron_expression_rejected_on_create(pipeline):
     client.force_authenticate(user=pipeline.owner)
 
     response = client.post(
-        "/api/pipelines/",
+        "/api/v1/pipelines/",
         {
             "name": "Bad Cron",
             "source": str(pipeline.source_id),
@@ -135,7 +138,7 @@ def test_queue_view_lists_only_inflight_runs(pipeline):
 
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
-    response = client.get("/api/scheduler/queue/")
+    response = client.get("/api/v1/scheduler/queue/")
 
     assert response.status_code == 200
     ids = [row["id"] for row in response.data]
@@ -157,7 +160,7 @@ def test_retry_failed_run_enqueues_a_new_run(pipeline):
 
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
-    response = client.post(f"/api/scheduler/runs/{failed_run.id}/retry/")
+    response = client.post(f"/api/v1/scheduler/runs/{failed_run.id}/retry/")
 
     assert response.status_code == 202
     assert response.data["id"] != str(failed_run.id)
@@ -171,7 +174,7 @@ def test_retry_rejects_non_failed_run(pipeline):
 
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
-    response = client.post(f"/api/scheduler/runs/{run.id}/retry/")
+    response = client.post(f"/api/v1/scheduler/runs/{run.id}/retry/")
     assert response.status_code == 400
 
 
@@ -186,7 +189,7 @@ def test_dead_letter_list_shows_exhausted_run(pipeline, monkeypatch):
 
     client = APIClient()
     client.force_authenticate(user=pipeline.owner)
-    response = client.get("/api/scheduler/dead-letter/")
+    response = client.get("/api/v1/scheduler/dead-letter/")
 
     assert response.status_code == 200
     assert response.data["count"] == 1

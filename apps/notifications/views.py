@@ -11,7 +11,7 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return NotificationLog.objects.filter(
-            run__pipeline__owner=self.request.user
+            run__pipeline__workspace__memberships__user=self.request.user
         ).select_related("run", "run__pipeline")
 
 

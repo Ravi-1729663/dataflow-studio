@@ -14,8 +14,9 @@ _slack_webhook_validator = RegexValidator(
 
 
 class NotificationPreference(BaseModel):
-    """Per-user opt-in/out for each channel. No workspaces yet (that's v0.7), so preferences are
-    scoped to the user, matching how DataSource/Pipeline ownership already works."""
+    """Per-user opt-in/out for each channel. Deliberately kept user-scoped rather than
+    workspace-scoped even after v0.7 introduced workspaces — a person's alerting preferences are
+    personal, not a property of any one workspace they belong to."""
 
     owner = models.OneToOneField(
         settings.AUTH_USER_MODEL,

@@ -8,6 +8,7 @@ from apps.etl.exceptions import EtlError
 from apps.pipelines.models import Pipeline, PipelineRun
 from apps.pipelines.services import execute_pipeline
 from apps.pipelines.tasks import run_pipeline_task
+from apps.workspaces.services import create_workspace
 
 from .channels import EmailChannel
 from .models import NotificationLog, NotificationPreference
@@ -29,11 +30,13 @@ def user(db):
 def pipeline(user, tmp_path, settings):
     settings.BASE_DIR = tmp_path
     (tmp_path / "customers.csv").write_text("customer_id,email\n1,a@x.com\n")
+    workspace = create_workspace(user, "Engineer Workspace")
     source = DataSource.objects.create(
         name="CSV",
         source_type=DataSource.SourceType.FILE,
         config={"path": "customers.csv"},
         owner=user,
+        workspace=workspace,
     )
     return Pipeline.objects.create(
         name="Ingest",
@@ -165,7 +168,7 @@ def test_slack_webhook_url_validation_rejects_non_slack_urls(user):
     client.force_authenticate(user=user)
 
     response = client.patch(
-        "/api/notifications/preference/",
+        "/api/v1/notifications/preference/",
         {"slack_enabled": True, "slack_webhook_url": "https://evil.example.com/steal"},
         format="json",
     )
@@ -177,12 +180,12 @@ def test_notification_preference_get_and_update(user):
     client = APIClient()
     client.force_authenticate(user=user)
 
-    response = client.get("/api/notifications/preference/")
+    response = client.get("/api/v1/notifications/preference/")
     assert response.status_code == 200
     assert response.data["email_enabled"] is True
 
     response = client.patch(
-        "/api/notifications/preference/", {"email_enabled": False}, format="json"
+        "/api/v1/notifications/preference/", {"email_enabled": False}, format="json"
     )
     assert response.status_code == 200
     assert response.data["email_enabled"] is False
@@ -195,8 +198,13 @@ def test_notification_log_api_scoped_to_owner(pipeline, user):
     execute_pipeline(pipeline)
 
     client = APIClient()
+    client.force_authenticate(user=user)
+    own_logs = client.get("/api/v1/notifications/logs/")
+    assert own_logs.status_code == 200
+    assert own_logs.data["count"] == 1
+
     client.force_authenticate(user=other)
-    response = client.get("/api/notifications/logs/")
+    response = client.get("/api/v1/notifications/logs/")
 
     assert response.status_code == 200
     assert response.data["count"] == 0

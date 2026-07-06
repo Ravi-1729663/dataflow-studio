@@ -290,7 +290,7 @@ def test_lineage_api_returns_the_graph_for_any_warehouse_table(
 
     client = APIClient()
     client.force_authenticate(user=user)
-    response = client.get("/api/metadata/datasets/customers/lineage/")
+    response = client.get("/api/v1/metadata/datasets/customers/lineage/")
 
     assert response.status_code == 200
     assert response.data["dataset"] == "customers"
@@ -307,11 +307,11 @@ def test_medallion_api_returns_rows_and_rejects_unknown_layer(tmp_path, settings
     client = APIClient()
     client.force_authenticate(user=user)
 
-    response = client.get("/api/metadata/datasets/customers/medallion/gold/")
+    response = client.get("/api/v1/metadata/datasets/customers/medallion/gold/")
     assert response.status_code == 200
     assert response.data["row_count"] == 1
 
-    response = client.get("/api/metadata/datasets/customers/medallion/platinum/")
+    response = client.get("/api/v1/metadata/datasets/customers/medallion/platinum/")
     assert response.status_code == 400
 
 
@@ -328,7 +328,7 @@ def test_schema_versions_api_lists_history(tmp_path, settings, user):
     client = APIClient()
     client.force_authenticate(user=user)
     response = client.get(
-        "/api/metadata/schema-versions/", {"dataset__name": "customers"}
+        "/api/v1/metadata/schema-versions/", {"dataset__name": "customers"}
     )
 
     assert response.status_code == 200

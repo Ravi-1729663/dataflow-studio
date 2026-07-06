@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from apps.common.exceptions import ConnectorError
+from apps.workspaces.services import create_workspace
 
 from .connectors.postgres_connector import PostgresConnector
 from .connectors.rest_api_connector import RestApiConnector
@@ -18,47 +19,59 @@ def auth_client(db):
     user = User.objects.create_user(
         username="engineer", password="pw12345678", role=User.Role.ENGINEER
     )
+    workspace = create_workspace(user, "Engineer Workspace")
     client = APIClient()
     client.force_authenticate(user=user)
-    return client, user
+    return client, user, workspace
 
 
 @pytest.mark.django_db
 def test_create_and_list_datasource_scoped_to_owner(auth_client):
-    client, user = auth_client
+    client, user, workspace = auth_client
     other = User.objects.create_user(username="other", password="pw12345678")
+    other_workspace = create_workspace(other, "Other Workspace")
     DataSource.objects.create(
-        name="not mine", source_type=DataSource.SourceType.FILE, config={}, owner=other
+        name="not mine",
+        source_type=DataSource.SourceType.FILE,
+        config={},
+        owner=other,
+        workspace=other_workspace,
     )
 
     response = client.post(
-        "/api/datasources/",
+        "/api/v1/datasources/",
         {
             "name": "Customers CSV",
             "source_type": "FILE",
             "config": {"path": "sample_data/customers.csv"},
+            "workspace": str(workspace.id),
         },
         format="json",
     )
     assert response.status_code == 201
     assert response.data["owner"] == user.id
 
-    response = client.get("/api/datasources/")
+    response = client.get("/api/v1/datasources/")
     assert response.status_code == 200
     assert response.data["count"] == 1
 
 
 @pytest.mark.django_db
 def test_viewer_cannot_create_datasource(auth_client):
-    client, _ = auth_client
+    client, _, workspace = auth_client
     viewer = User.objects.create_user(
         username="viewer", password="pw12345678", role=User.Role.VIEWER
     )
     client.force_authenticate(user=viewer)
 
     response = client.post(
-        "/api/datasources/",
-        {"name": "x", "source_type": "FILE", "config": {}},
+        "/api/v1/datasources/",
+        {
+            "name": "x",
+            "source_type": "FILE",
+            "config": {},
+            "workspace": str(workspace.id),
+        },
         format="json",
     )
     assert response.status_code == 403
@@ -66,17 +79,48 @@ def test_viewer_cannot_create_datasource(auth_client):
 
 @pytest.mark.django_db
 def test_test_connection_action_reports_missing_file(auth_client):
-    client, user = auth_client
+    client, user, workspace = auth_client
     data_source = DataSource.objects.create(
         name="missing",
         source_type=DataSource.SourceType.FILE,
         config={"path": "sample_data/does_not_exist.csv"},
         owner=user,
+        workspace=workspace,
     )
 
-    response = client.post(f"/api/datasources/{data_source.id}/test-connection/")
+    response = client.post(f"/api/v1/datasources/{data_source.id}/test-connection/")
     assert response.status_code == 400
     assert response.data["ok"] is False
+
+
+@pytest.mark.django_db
+def test_config_is_encrypted_at_rest(auth_client):
+    """v0.7 acceptance: credentials are encrypted in the DB. Reads the raw column via a plain
+    SQL cursor (bypassing the model's decrypting field) to prove the stored bytes aren't
+    plaintext JSON."""
+    client, user, workspace = auth_client
+    data_source = DataSource.objects.create(
+        name="Postgres Source",
+        source_type=DataSource.SourceType.POSTGRES,
+        config={"dsn": "postgresql://user:hunter2@db.internal/prod"},
+        owner=user,
+        workspace=workspace,
+    )
+
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT config FROM datasources_datasource WHERE name = %s",
+            [data_source.name],
+        )
+        (raw_value,) = cursor.fetchone()
+
+    assert "hunter2" not in raw_value
+    assert "dsn" not in raw_value
+
+    data_source.refresh_from_db()
+    assert data_source.config == {"dsn": "postgresql://user:hunter2@db.internal/prod"}
 
 
 # ---- PostgresConnector --------------------------------------------------------------------------
