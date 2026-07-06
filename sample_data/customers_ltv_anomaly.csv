@@ -1,0 +1,4 @@
+customer_id,first_name,last_name,email,signup_date,country,lifetime_value
+306,Rosalind,Franklin,rosalind.franklin@example.com,2024-03-10,UK,98
+307,Hedy,Lamarr,hedy.lamarr@example.com,2024-03-15,US,50000
+308,Chien-Shiung,Wu,chien.wu@example.com,2024-03-20,US,101

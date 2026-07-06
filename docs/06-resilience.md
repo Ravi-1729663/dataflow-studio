@@ -3,6 +3,14 @@
 Two kinds of "does this actually hold up" evidence, beyond the pytest suite: a load test (does it
 stay fast under concurrent users?) and a chaos test (does it survive a worker dying mid-task?).
 
+**Both target the docker-compose stack** (a real Celery worker, `CELERY_TASK_ALWAYS_EAGER=0`), not
+the free Render deployment. The live Render demo intentionally runs in eager mode (no separate
+worker at all — see `docs/05-deployment.md`) because Render's free tier doesn't offer a
+Background Worker service type; there's no worker process there to load-test or kill. The chaos
+test's finding — that this project's Celery reliability settings make a killed worker's task
+redeliverable and safely re-runnable — is a property of the full architecture (docker-compose or a
+paid-tier Render deployment with an actual worker service), not of the free-tier simplification.
+
 ## Load test
 
 `loadtest/locustfile.py` (Locust) drives the same calls the React SPA makes — see

@@ -1,11 +1,29 @@
-﻿databases:
+# Render Blueprint (https://render.com/docs/blueprint-spec) — a single free Web Service +
+# managed Postgres. See docs/05-deployment.md for the full walkthrough.
+#
+# No worker/beat services: Render's free tier only offers Web Services, Static Sites, a free
+# Postgres, and a free Redis — "Background Worker" is a paid-plan-only service type. Rather than
+# pay for that (or fake a worker as a Web Service with a health-check hack), this blueprint runs
+# with CELERY_TASK_ALWAYS_EAGER=1 — the exact same zero-setup mode this project already uses for
+# local dev and the whole pytest suite, so it's a well-exercised code path, not a workaround
+# bolted on for deployment. Pipeline runs execute synchronously inside the request instead of
+# being handed to a queue; the only real loss is cron-scheduled pipelines (they need
+# django-celery-beat actually running as a worker), which is a paid-tier upgrade path, not
+# something this free demo exercises. Manual "Run", validation, cleansing, anomaly detection,
+# lineage, and dashboards all work exactly the same either way.
+databases:
   - name: dataflow-studio-db
     plan: free
     databaseName: dataflow
     user: dataflow
 
-envVarGroups:
-  - name: dataflow-studio-shared
+services:
+  - type: web
+    name: dataflow-studio-web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health/
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
@@ -14,28 +32,13 @@ envVarGroups:
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
       - key: FERNET_KEY
-        sync: false
+        sync: false # generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       - key: USE_POSTGRES
         value: "1"
       - key: CELERY_TASK_ALWAYS_EAGER
-        value: "0"
+        value: "1" # no worker service on the free tier — see the note above
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
-
-services:
-  - type: redis
-    name: dataflow-studio-redis
-    plan: free
-    ipAllowList: []
-
-  - type: web
-    name: dataflow-studio-web
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /api/health/
-    envVars:
-      - fromGroup: dataflow-studio-shared
+        sync: false # the deployed frontend's origin, e.g. https://dataflow-studio-frontend.onrender.com
       - key: POSTGRES_DB
         fromDatabase: { name: dataflow-studio-db, property: database }
       - key: POSTGRES_USER
@@ -46,53 +49,3 @@ services:
         fromDatabase: { name: dataflow-studio-db, property: host }
       - key: POSTGRES_PORT
         fromDatabase: { name: dataflow-studio-db, property: port }
-      - key: CELERY_BROKER_URL
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-      - key: CELERY_RESULT_BACKEND
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-
-  - type: worker
-    name: dataflow-studio-worker
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A config worker -l info --pool=solo
-    envVars:
-      - fromGroup: dataflow-studio-shared
-      - key: POSTGRES_DB
-        fromDatabase: { name: dataflow-studio-db, property: database }
-      - key: POSTGRES_USER
-        fromDatabase: { name: dataflow-studio-db, property: user }
-      - key: POSTGRES_PASSWORD
-        fromDatabase: { name: dataflow-studio-db, property: password }
-      - key: POSTGRES_HOST
-        fromDatabase: { name: dataflow-studio-db, property: host }
-      - key: POSTGRES_PORT
-        fromDatabase: { name: dataflow-studio-db, property: port }
-      - key: CELERY_BROKER_URL
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-      - key: CELERY_RESULT_BACKEND
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-
-  - type: worker
-    name: dataflow-studio-beat
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A config beat -l info
-    envVars:
-      - fromGroup: dataflow-studio-shared
-      - key: POSTGRES_DB
-        fromDatabase: { name: dataflow-studio-db, property: database }
-      - key: POSTGRES_USER
-        fromDatabase: { name: dataflow-studio-db, property: user }
-      - key: POSTGRES_PASSWORD
-        fromDatabase: { name: dataflow-studio-db, property: password }
-      - key: POSTGRES_HOST
-        fromDatabase: { name: dataflow-studio-db, property: host }
-      - key: POSTGRES_PORT
-        fromDatabase: { name: dataflow-studio-db, property: port }
-      - key: CELERY_BROKER_URL
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }
-      - key: CELERY_RESULT_BACKEND
-        fromService: { type: redis, name: dataflow-studio-redis, property: connectionString }

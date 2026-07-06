@@ -1,0 +1,6 @@
+customer_id,first_name,last_name,email,signup_date,country,lifetime_value
+301,Ada,Lovelace,ada.lovelace@example.com,2024-01-15,UK,95
+302,Grace,Hopper,grace.hopper@example.com,2024-01-22,US,110
+303,Katherine,Johnson,katherine.johnson@example.com,2024-02-03,US,88
+304,Margaret,Hamilton,margaret.hamilton@example.com,2024-02-10,US,102
+305,Marie,Curie,marie.curie@example.com,2024-03-01,FR,105
