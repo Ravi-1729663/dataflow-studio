@@ -41,6 +41,13 @@ export const dataSources = {
   remove: (id: string) => api.delete(`/datasources/${id}/`),
   testConnection: (id: string) =>
     api.post<{ ok: boolean; error?: string }>(`/datasources/${id}/test-connection/`),
+  upload: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.post<{ path: string }>("/datasources/upload/", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
 };
 
 export const pipelines = {

@@ -63,6 +63,22 @@ function NewDataSourceForm({
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+
+  const handleFileUpload = async (file: File) => {
+    setUploading(true);
+    setError(null);
+    try {
+      const response = await dataSourcesApi.upload(file);
+      setConfigValues((prev) => ({ ...prev, path: response.data.path }));
+      setUploadedFileName(file.name);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -100,6 +116,7 @@ function NewDataSourceForm({
           onChange={(e) => {
             setSourceType(e.target.value as SourceType);
             setConfigValues({});
+            setUploadedFileName(null);
           }}
         >
           {SOURCE_TYPES.map((type) => (
@@ -109,6 +126,25 @@ function NewDataSourceForm({
           ))}
         </select>
       </label>
+      {sourceType === "FILE" && (
+        <label>
+          Upload a CSV (or type a path below to use a bundled sample, e.g.{" "}
+          <code>sample_data/customers.csv</code>)
+          <input
+            type="file"
+            accept=".csv"
+            disabled={uploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleFileUpload(file);
+            }}
+          />
+          {uploading && <span className="muted"> Uploading…</span>}
+          {uploadedFileName && !uploading && (
+            <span className="test-ok"> Uploaded {uploadedFileName}</span>
+          )}
+        </label>
+      )}
       {configFieldsFor(sourceType).map((field) => (
         <label key={field.key}>
           {field.label}

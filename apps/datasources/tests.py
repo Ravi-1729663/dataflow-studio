@@ -1,12 +1,15 @@
 import urllib.error
+from pathlib import Path
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from apps.common.exceptions import ConnectorError
 from apps.workspaces.services import create_workspace
 
+from . import services
 from .connectors.postgres_connector import PostgresConnector
 from .connectors.rest_api_connector import RestApiConnector
 from .connectors.s3_connector import S3Connector
@@ -92,6 +95,80 @@ def test_test_connection_action_reports_missing_file(auth_client):
     response = client.post(f"/api/v1/datasources/{data_source.id}/test-connection/")
     assert response.status_code == 400
     assert response.data["ok"] is False
+
+
+# ---- file upload ----------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_upload_saves_csv_and_returns_a_usable_path(auth_client, tmp_path, settings):
+    settings.MEDIA_ROOT = tmp_path
+    client, _, _ = auth_client
+    csv_file = SimpleUploadedFile(
+        "customers.csv", b"customer_id,email\n1,a@x.com\n", content_type="text/csv"
+    )
+
+    response = client.post(
+        "/api/v1/datasources/upload/", {"file": csv_file}, format="multipart"
+    )
+
+    assert response.status_code == 201
+    path = response.data["path"]
+    assert path.startswith("media/uploads/")
+    assert path.endswith(".csv")
+    assert (tmp_path / Path(path).relative_to("media")).exists()
+
+
+@pytest.mark.django_db
+def test_upload_rejects_non_csv_files(auth_client, tmp_path, settings):
+    settings.MEDIA_ROOT = tmp_path
+    client, _, _ = auth_client
+    bad_file = SimpleUploadedFile("data.txt", b"not a csv", content_type="text/plain")
+
+    response = client.post(
+        "/api/v1/datasources/upload/", {"file": bad_file}, format="multipart"
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_upload_rejects_oversized_files(auth_client, tmp_path, settings, monkeypatch):
+    settings.MEDIA_ROOT = tmp_path
+    monkeypatch.setattr(services, "MAX_UPLOAD_SIZE_BYTES", 10)
+    client, _, _ = auth_client
+    big_file = SimpleUploadedFile("big.csv", b"x" * 100, content_type="text/csv")
+
+    response = client.post(
+        "/api/v1/datasources/upload/", {"file": big_file}, format="multipart"
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_upload_requires_a_file(auth_client):
+    client, _, _ = auth_client
+    response = client.post("/api/v1/datasources/upload/", {}, format="multipart")
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_viewer_cannot_upload(auth_client):
+    client, _, _ = auth_client
+    viewer = User.objects.create_user(
+        username="viewer2", password="pw12345678", role=User.Role.VIEWER
+    )
+    client.force_authenticate(user=viewer)
+    csv_file = SimpleUploadedFile(
+        "customers.csv", b"a,b\n1,2\n", content_type="text/csv"
+    )
+
+    response = client.post(
+        "/api/v1/datasources/upload/", {"file": csv_file}, format="multipart"
+    )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.django_db

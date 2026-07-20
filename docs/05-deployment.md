@@ -52,7 +52,10 @@ tier:
 
 **Free-tier caveats** (worth knowing, not blockers): the web service spins down after 15 minutes
 idle (first request after that takes ~30-60s to cold-start); the free Postgres instance expires
-after 30 days unless upgraded. Fine for a portfolio demo, not for anything real.
+after 30 days unless upgraded; and anything saved via the "upload a CSV" data source feature
+(`POST /api/v1/datasources/upload/`) is written to the container's local disk, which Render wipes
+on every redeploy or restart — an uploaded file only lasts for the life of the current container,
+not indefinitely. Fine for a portfolio demo, not for anything real.
 
 ### Testing the live demo
 

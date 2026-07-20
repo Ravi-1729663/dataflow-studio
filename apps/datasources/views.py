@@ -2,6 +2,7 @@ import logging
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.permissions import IsEngineerOrAdminOrReadOnly
@@ -61,3 +62,21 @@ class DataSourceViewSet(viewsets.ModelViewSet):
         except ConnectorError as exc:
             return Response({"ok": False, "error": str(exc)}, status=400)
         return Response({"ok": True})
+
+    @action(
+        detail=False,
+        methods=["post"],
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def upload(self, request):
+        """Saves an uploaded CSV to local disk and returns the path to use as a FILE data
+        source's ``config.path`` — a convenience for local/single-instance use, not durable
+        storage (see ``services.save_uploaded_file``)."""
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            return Response({"error": "no file provided"}, status=400)
+        try:
+            path = services.save_uploaded_file(uploaded_file)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        return Response({"path": path}, status=201)

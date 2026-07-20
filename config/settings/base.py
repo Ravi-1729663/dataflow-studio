@@ -129,6 +129,16 @@ STORAGES = {
     },
 }
 
+# ---- Uploads (v0.9) ----
+# Backs the "upload a CSV" data source flow (apps.datasources.services.save_uploaded_file) — local
+# disk under BASE_DIR, so an uploaded file's path resolves as a normal FILE-source config.path
+# with no changes needed to apps.pipelines.services. Deliberately not object storage: this is a
+# convenience for local/single-instance use, not a durability guarantee — on a platform with an
+# ephemeral filesystem (e.g. Render's free tier), an upload does not survive a restart/redeploy.
+# Point the S3 connector at a real bucket instead if you need uploads to actually persist.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---- DRF ----

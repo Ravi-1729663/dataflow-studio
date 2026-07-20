@@ -76,6 +76,16 @@ way, so nothing changes to point a pipeline built against MinIO at real S3 later
 to workspace membership (v0.7: `workspace` is a required, serializer-validated field — the client
 must be a member of the workspace it names); a "test connection" action.
 
+**File upload (v0.9):** `POST datasources/upload/` (`services.save_uploaded_file`) accepts a CSV
+and saves it under `MEDIA_ROOT` (`BASE_DIR/media`, local disk), returning a path that works
+directly as a FILE source's `config.path` — `apps.pipelines.services` already resolves a relative
+path against `BASE_DIR`, so nothing else needed to change. Rejects non-`.csv` files and anything
+over 10MB. **Deliberately local disk, not object storage** — a convenience for local/single-instance
+use, not a durability guarantee: on a platform with an ephemeral filesystem (Render's free tier),
+an upload does not survive a restart/redeploy. If uploads need to actually persist, point the
+S3 connector at a real bucket instead — same underlying idea (read a file from *somewhere*), just
+backed by storage that outlives the container.
+
 ## etl  (framework-agnostic â€” no Django imports)
 Pure functions: `extract(source_type, config)` (file/postgres/rest_api/s3 — postgres via a plain
 `psycopg2` cursor, rest_api via `urllib` with pagination, a configurable rate limit and retry with
