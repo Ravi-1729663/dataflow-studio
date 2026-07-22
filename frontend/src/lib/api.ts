@@ -71,14 +71,17 @@ api.interceptors.response.use(
   },
 );
 
-/** Pulls the DRF common exception handler's `{error: {message, details}}` envelope into a
- * single readable string, falling back to the raw error message for network-level failures. */
+/** Pulls a readable message out of an API error. Handles the common exception handler's
+ * `{error: {message, details}}` envelope, the plain `{error: string}` shape some actions
+ * (e.g. test-connection) return directly, and falls back to the raw error for network-level
+ * failures. */
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as
-      | { error?: { message?: string; details?: unknown } }
+      | { error?: { message?: string; details?: unknown } | string }
       | undefined;
     if (data?.error) {
+      if (typeof data.error === "string") return data.error;
       const details = data.error.details;
       if (details && typeof details === "object") {
         const parts = Object.entries(details).map(

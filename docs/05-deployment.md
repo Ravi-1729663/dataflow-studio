@@ -42,10 +42,20 @@ tier:
 4. Apply. Render builds the Docker image and runs `python manage.py migrate` automatically
    (`Dockerfile`'s `CMD`). Nothing else to seed — register a user from the frontend (or
    `POST /api/v1/auth/register/`) once it's live.
-5. **Frontend:** deploy `frontend/` separately as a Render **Static Site** (build command
-   `npm ci && npm run build`, publish directory `dist`), with `VITE_API_BASE_URL` set to the web
-   service's URL. Then go back to the web service's env vars and set `CORS_ALLOWED_ORIGINS` to the
-   static site's URL; redeploy.
+5. **Frontend:** deploy `frontend/` separately, on either platform — same build either way, both
+   free:
+   - **Render Static Site**: build command `npm ci && npm run build`, publish directory `dist`.
+   - **Vercel**: import the repo, set the project **root directory** to `frontend/` (it's a
+     subfolder, not the repo root), framework preset "Vite" (build command `npm run build`,
+     output directory `dist` — Vercel detects these automatically). `frontend/vercel.json`
+     rewrites all paths to `index.html` so client-side routes (e.g. `/pipelines/:id`) don't 404 on
+     a hard refresh.
+
+   Either way: set `VITE_API_BASE_URL` (an env var in the frontend project, not the backend) to
+   the Render **web service's** URL, e.g. `https://dataflow-studio-web.onrender.com` — no
+   `/api/v1` suffix, `api.ts` appends that. Then go back to the *backend* web service's env vars
+   on Render and set `CORS_ALLOWED_ORIGINS` to the frontend's final URL (the Vercel or Render
+   Static Site domain); redeploy the backend for that to take effect.
 6. (Optional) Add `RENDER_DEPLOY_HOOK_URL` as a GitHub repo secret (Settings → Secrets and
    variables → Actions) — the URL is under the web service's Settings → Deploy Hook in Render.
    With it set, `.github/workflows/ci.yml`'s `deploy` job auto-redeploys on every push to `main`.

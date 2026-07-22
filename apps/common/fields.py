@@ -3,10 +3,13 @@ DataSource.config Fernet-encrypted at rest (CLAUDE.md's "credentials are encrypt
 """
 
 import json
+import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.db import models
+
+logger = logging.getLogger("dataflow.common")
 
 
 def _fernet() -> Fernet:
@@ -31,6 +34,12 @@ class EncryptedJSONField(models.TextField):
         try:
             plaintext = _fernet().decrypt(value.encode())
         except InvalidToken:
+            logger.warning(
+                "EncryptedJSONField decryption failed — returning {} instead of raising. "
+                "Likely a stale row written before this column was encrypted, or FERNET_KEY "
+                "changed since it was written.",
+                extra={"column_preview": value[:16]},
+            )
             return {}
         return json.loads(plaintext)
 

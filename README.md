@@ -154,6 +154,7 @@ scripts/        chaos_test.py
 - [`docs/05-deployment.md`](docs/05-deployment.md) — Render + docker-compose, step by step
 - [`docs/06-resilience.md`](docs/06-resilience.md) — load test + chaos test methodology and results
 - [`docs/07-portfolio-and-interviews.md`](docs/07-portfolio-and-interviews.md) — how to present this project, STAR stories, and answers to the tough interview questions
+- [`docs/08-rebuild-runbook.md`](docs/08-rebuild-runbook.md) — every account/secret/step needed to rebuild this from nothing, plus a troubleshooting table of real incidents hit while building it
 - [`docs/adr/`](docs/adr/) — architecture decision records
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — conventions, how CI gates a PR
 - [`PROJECT_PLAN.md`](PROJECT_PLAN.md) — the milestone-by-milestone build plan this was built against
