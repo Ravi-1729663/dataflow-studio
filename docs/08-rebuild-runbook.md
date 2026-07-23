@@ -1,7 +1,8 @@
 # Rebuild runbook (v0.9)
 
-If this repo, the Render project, and the Vercel project all vanished tomorrow, this document is
-what you'd hand someone (or your future self) to bring DataFlow Studio back from nothing. It does
+If this repo, the PythonAnywhere project, and the Vercel project all vanished tomorrow, this
+document is what you'd hand someone (or your future self) to bring DataFlow Studio back from
+nothing. It does
 not re-explain *what* each module does — `docs/04-modules.md` is the source of truth for that and
 is kept in sync per `CLAUDE.md`'s Definition of Done. This is the connective tissue: accounts,
 secrets, order of operations, and how to prove each stage actually works before moving to the next.
@@ -19,10 +20,11 @@ the OLTP store, and a React/Vite SPA frontend talking to it over a JWT-authentic
 
 | Account | Free tier used for | Notes |
 |---|---|---|
-| GitHub | Source of truth; Render/Vercel deploy from here, not a local checkout | Repo must be pushed — neither platform reads your local filesystem |
-| Render | Backend web service + managed Postgres | Free web service spins down after 15 min idle; free Postgres expires after 30 days unless upgraded |
+| GitHub | Source of truth; PythonAnywhere/Vercel deploy/pull from here, not a local checkout | Repo must be pushed |
+| PythonAnywhere | Backend web app (current live host) | No card, no cold start, no expiring database — trade-off is SQLite instead of Postgres and a whitelisted-outbound-hosts restriction on the free tier, see `docs/05-deployment.md` Option A |
 | Vercel | Frontend static build | Root Directory must be set to `frontend/` — it's a subfolder |
-| (Optional) A real AWS S3 bucket | Exercising the S3 connector against a real endpoint from the live deployment | Not required — MinIO in docker-compose covers this locally; Render can't reach `localhost:9000` |
+| (Optional) Render | Alternative backend host with real Postgres | Its free Postgres plan expires after 30 days — this is the actual incident that moved the live demo to PythonAnywhere, see the troubleshooting table below |
+| (Optional) A real AWS S3 bucket | Exercising the S3 connector against a real endpoint from the live deployment | Not required — MinIO in docker-compose covers this locally; neither Render nor PythonAnywhere's free tier can reach `localhost:9000` or arbitrary S3 endpoints |
 
 No other third-party accounts. Email notifications use Django's console backend by default (logs
 only, no real account needed) — see `apps/notifications/`.
@@ -63,12 +65,13 @@ Full defaults live in `.env.example` (backend) and `frontend/.env.example`.
    worker and cron scheduling; verify with `docker compose logs worker --tail=50` after running a
    pipeline — you should see the task picked up and completed, not just enqueued.
 7. **Only once 3-6 are green**, push to GitHub and deploy:
-   - Render: New → Blueprint → point at `render.yaml` → fill in the `sync: false` values
-     (`FERNET_KEY`, `CORS_ALLOWED_ORIGINS`) → Apply. See `docs/05-deployment.md` Option A for the
-     full walkthrough including free-tier caveats.
-   - Vercel: import repo, Root Directory = `frontend`, env var `VITE_API_BASE_URL` = the Render
-     web service URL. `frontend/vercel.json` handles SPA routing.
-   - Go back to Render, set `CORS_ALLOWED_ORIGINS` to the Vercel URL, redeploy.
+   - PythonAnywhere: sign up, clone the repo in a Bash console, `pip install -r requirements.txt`,
+     write a `.env` (see the variable table above), migrate, point the Web tab's WSGI file at
+     `config.wsgi.application` with `DJANGO_SETTINGS_MODULE=config.settings.production` set
+     explicitly. Full steps in `docs/05-deployment.md` Option A.
+   - Vercel: import repo, Root Directory = `frontend`, env var `VITE_API_BASE_URL` = the
+     PythonAnywhere URL. `frontend/vercel.json` handles SPA routing.
+   - Go back to PythonAnywhere's `.env`, set `CORS_ALLOWED_ORIGINS` to the Vercel URL, Reload.
 8. **Prove the live deployment, not just the build**: register a user through the live frontend,
    create a data source, run a pipeline, check the dashboard — the exact walkthrough is in
    `docs/05-deployment.md`'s "Testing the live demo" section. A green build is not the same claim
@@ -87,14 +90,18 @@ hour of debugging doesn't happen twice, and because they're also solid interview
 | A newly-added `sample_data/*.csv` isn't visible inside a running container | Docker images are built via `COPY . .` — filesystem is baked at build time, not live-mounted | `docker compose build web worker && docker compose up -d` after adding files |
 | Render Blueprint sync fails: "service type is not available for this plan" | Free tier has no Background Worker service type | `render.yaml` uses a single Web Service with `CELERY_TASK_ALWAYS_EAGER=1` instead — see the comment block at the top of that file |
 | Data source "Test connection" returns a generic "Request failed with status code 400" instead of the real reason | `test_connection`'s view returns `{"error": "..."}` directly (bypassing the common exception handler's `{error: {message, details}}` envelope); `apiErrorMessage` only knew that one shape | `apiErrorMessage` (`frontend/src/lib/api.ts`) now also handles a plain string `error` field |
-| Render backend returns HTTP 503 with `Retry-After` on first hit | Free-tier cold start after 15 min idle — expected, not a bug | Hit it again after ~30-60s; if it's still 503 after that, check the Render dashboard logs for an actual crash instead of assuming cold start |
+| Render backend returns HTTP 503 with `Retry-After` on first hit | Free-tier cold start after 15 min idle — expected, not a bug, *if* it clears within ~60s | Hit it again after ~30-60s |
+| Render backend stays 503 across multiple days, not just one cold start | The free managed Postgres plan expired (Render's free Postgres has a hard 30-day lifetime, unlike the web service itself) | This is the actual incident that happened — the fix taken was to move the live demo to PythonAnywhere (Option A), which has no separate database to expire, rather than keep recreating a Postgres instance every month |
 
 ## 6. What "done" looks like right now
 
-- Backend: 144 tests green, ruff/black clean.
+- Backend: 167 tests green, ruff/black clean.
 - Frontend: lint + `tsc -b` + `vite build` clean.
 - Local docker-compose: full async architecture verified (worker picks up and completes tasks).
-- Render: backend deployed as a single web service + free Postgres, eager Celery mode.
+- PythonAnywhere: current live backend host, SQLite, eager Celery mode — deployment steps written,
+  actual live deploy is a pending step (confirm your own URL and update this line once it's up).
+- Render: kept as a documented alternative; its free Postgres expired in practice, which is why
+  it's no longer the primary live host.
 - Vercel: frontend deploy is a pending step — not yet live as of this writing (confirm your own
   Vercel URL and update this line, and the README's live-demo link, once it is).
 

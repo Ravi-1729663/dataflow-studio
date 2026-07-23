@@ -59,7 +59,7 @@ competency rather than to compete with any one of those tools.
 | "It's tested" | 167 automated tests, `ruff`/`black` clean, CI on every push/PR |
 | "It handles load" | Locust: 1,203 requests, 25 concurrent users, **0% failure rate**, p95 latency 88ms — [`loadtest/README.md`](loadtest/README.md) |
 | "It recovers from failure" | A script hard-kills a real Celery worker mid-pipeline-run and proves the run still completes correctly on a replacement worker — [`docs/06-resilience.md`](docs/06-resilience.md), [`docs/reports/chaos-test-report.md`](docs/reports/chaos-test-report.md) |
-| "It's deployable" | Infrastructure-as-code (`render.yaml`) + Docker Compose, both documented in [`docs/05-deployment.md`](docs/05-deployment.md) |
+| "It's deployable" | Infrastructure-as-code (`render.yaml`) + Docker Compose + a live PythonAnywhere deployment, all documented in [`docs/05-deployment.md`](docs/05-deployment.md) — including the real trade-off that moved the live demo off Render (its free Postgres expires after 30 days) |
 
 ## Screenshots
 
@@ -95,8 +95,9 @@ cp .env.example .env
 make docker-up
 ```
 
-Deploying it for free (Render) is in [`docs/05-deployment.md`](docs/05-deployment.md), including a
-walkthrough for testing cleansing/anomaly detection/S3 on the live instance using the demo CSVs in
+Deploying it for free (PythonAnywhere — the current live host — plus Render and docker-compose as
+documented alternatives) is in [`docs/05-deployment.md`](docs/05-deployment.md), including a
+walkthrough for testing cleansing/anomaly detection on the live instance using the demo CSVs in
 `sample_data/`.
 
 ## Architecture
