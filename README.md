@@ -56,7 +56,7 @@ competency rather than to compete with any one of those tools.
 
 | Claim | Evidence |
 |---|---|
-| "It's tested" | 162 automated tests, `ruff`/`black` clean, CI on every push/PR |
+| "It's tested" | 167 automated tests, `ruff`/`black` clean, CI on every push/PR |
 | "It handles load" | Locust: 1,203 requests, 25 concurrent users, **0% failure rate**, p95 latency 88ms — [`loadtest/README.md`](loadtest/README.md) |
 | "It recovers from failure" | A script hard-kills a real Celery worker mid-pipeline-run and proves the run still completes correctly on a replacement worker — [`docs/06-resilience.md`](docs/06-resilience.md), [`docs/reports/chaos-test-report.md`](docs/reports/chaos-test-report.md) |
 | "It's deployable" | Infrastructure-as-code (`render.yaml`) + Docker Compose, both documented in [`docs/05-deployment.md`](docs/05-deployment.md) |
